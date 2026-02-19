@@ -1,0 +1,443 @@
+import SwiftUI
+import AVKit
+
+struct TimelineTabView: View {
+    @ObservedObject var appState: AppState
+    @State private var viewport = TimelineViewport()
+    @State private var playheadTime: TimeInterval = 0
+    @State private var timeObserver: Any?
+    @State private var previewBoundaryObserver: Any?
+    @State private var selectedPointID: UUID?
+
+    var body: some View {
+        HSplitView {
+            // Left panel: player + timeline + minimap
+            VStack(spacing: 12) {
+                // Video player
+                if let player = appState.player {
+                    VideoPlayer(player: player)
+                        .frame(minHeight: 280)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .onAppear { setupTimeObserver(player) }
+                        .onDisappear { removeTimeObserver(player) }
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(.gray.opacity(0.15))
+                        .overlay(Text("No video loaded").foregroundStyle(.secondary))
+                        .frame(minHeight: 280)
+                }
+
+                // Confidence graph
+                if !appState.featureFrames.isEmpty {
+                    ConfidenceGraphView(
+                        featureFrames: appState.featureFrames,
+                        viewport: viewport,
+                        playheadTime: playheadTime
+                    )
+                    .frame(height: 80)
+                }
+
+                // Interactive trim timeline
+                if !appState.segments.isEmpty {
+                    TrimOverlayTimelineView(
+                        appState: appState,
+                        viewport: $viewport,
+                        playheadTime: $playheadTime
+                    )
+                    .frame(height: 60)
+                }
+
+                // Minimap
+                if !appState.segments.isEmpty {
+                    MinimapView(
+                        appState: appState,
+                        viewport: $viewport,
+                        playheadTime: playheadTime
+                    )
+                    .frame(height: 30)
+                }
+
+                // Zoom controls
+                HStack {
+                    Button(action: { viewport.zoomOut(around: playheadTime) }) {
+                        Image(systemName: "minus.magnifyingglass")
+                    }
+                    Text(String(format: "%.1fx", viewport.zoom))
+                        .font(.caption).monospacedDigit()
+                    Button(action: { viewport.zoomIn(around: playheadTime) }) {
+                        Image(systemName: "plus.magnifyingglass")
+                    }
+                    Spacer()
+                    Text(formatTime(playheadTime))
+                        .font(.caption).monospacedDigit()
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .frame(minWidth: 500)
+            .onAppear { resetViewport() }
+            .onChange(of: appState.videoMetadata?.duration) { _, _ in resetViewport() }
+
+            // Right panel: Point list
+            PointListView(appState: appState) { point in
+                previewPoint(point)
+            }
+            .frame(minWidth: 280, maxWidth: 350)
+        }
+    }
+
+    // MARK: - Time Observer
+
+    private func setupTimeObserver(_ player: AVPlayer) {
+        let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+            playheadTime = time.seconds
+        }
+    }
+
+    private func removeTimeObserver(_ player: AVPlayer) {
+        if let observer = timeObserver {
+            player.removeTimeObserver(observer)
+            timeObserver = nil
+        }
+        if let obs = previewBoundaryObserver {
+            player.removeTimeObserver(obs)
+            previewBoundaryObserver = nil
+        }
+    }
+
+    private func previewPoint(_ point: GamePoint) {
+        guard let player = appState.player else { return }
+
+        selectedPointID = point.id
+
+        // Seek to point start
+        let startCM = CMTime(seconds: point.start, preferredTimescale: 600)
+        player.seek(to: startCM, toleranceBefore: .zero, toleranceAfter: .zero)
+        playheadTime = point.start
+
+        // Scroll viewport to center on the point segment
+        let totalDuration = appState.videoMetadata?.duration ?? 60
+        let pointCenter = (point.start + point.end) / 2
+        let halfVisible = viewport.visibleDuration / 2
+        viewport.visibleStart = max(0, min(pointCenter - halfVisible, totalDuration - viewport.visibleDuration))
+        viewport.visibleEnd = viewport.visibleStart + viewport.visibleDuration
+
+        // Remove any existing boundary observer
+        if let obs = previewBoundaryObserver {
+            player.removeTimeObserver(obs)
+            previewBoundaryObserver = nil
+        }
+
+        // Auto-play and pause at point end
+        let endCM = CMTime(seconds: point.end, preferredTimescale: 600)
+        previewBoundaryObserver = player.addBoundaryTimeObserver(
+            forTimes: [NSValue(time: endCM)],
+            queue: .main
+        ) { [weak player] in
+            player?.pause()
+        }
+        player.play()
+    }
+
+    private func resetViewport() {
+        let duration = appState.videoMetadata?.duration ?? 60
+        viewport = TimelineViewport(visibleStart: 0, visibleEnd: duration, zoom: 1.0)
+    }
+
+    private func formatTime(_ t: TimeInterval) -> String {
+        let mins = Int(t) / 60
+        let secs = Int(t) % 60
+        let ms = Int((t - Double(Int(t))) * 100)
+        return String(format: "%d:%02d.%02d", mins, secs, ms)
+    }
+}
+
+// MARK: - Confidence Graph
+
+struct ConfidenceGraphView: View {
+    let featureFrames: [FeatureFrame]
+    let viewport: TimelineViewport
+    let playheadTime: TimeInterval
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let height = geo.size.height
+
+            ZStack(alignment: .topLeading) {
+                // Background
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.gray.opacity(0.1))
+
+                // Motion line (blue)
+                Path { path in
+                    drawLine(path: &path, keyPath: \.motionScore, width: width, height: height, color: .blue)
+                }
+                .stroke(Color.blue.opacity(0.7), lineWidth: 1.5)
+
+                // Audio line (orange)
+                Path { path in
+                    drawLine(path: &path, keyPath: \.audioScore, width: width, height: height, color: .orange)
+                }
+                .stroke(Color.orange.opacity(0.7), lineWidth: 1.5)
+
+                // Playhead
+                let px = timeToX(playheadTime, width: width)
+                Rectangle()
+                    .fill(Color.white)
+                    .frame(width: 1)
+                    .offset(x: px)
+
+                // Legend
+                HStack(spacing: 8) {
+                    HStack(spacing: 3) {
+                        RoundedRectangle(cornerRadius: 1).fill(.blue.opacity(0.7)).frame(width: 12, height: 2)
+                        Text("Motion").font(.caption2)
+                    }
+                    HStack(spacing: 3) {
+                        RoundedRectangle(cornerRadius: 1).fill(.orange.opacity(0.7)).frame(width: 12, height: 2)
+                        Text("Audio").font(.caption2)
+                    }
+                }
+                .padding(4)
+            }
+        }
+    }
+
+    private func drawLine(path: inout Path, keyPath: KeyPath<FeatureFrame, Double>, width: CGFloat, height: CGFloat, color: Color) {
+        let visibleFrames = featureFrames.filter {
+            $0.timestamp >= viewport.visibleStart && $0.timestamp <= viewport.visibleEnd
+        }
+        guard !visibleFrames.isEmpty else { return }
+
+        var started = false
+        for frame in visibleFrames {
+            let x = timeToX(frame.timestamp, width: width)
+            let y = height - CGFloat(frame[keyPath: keyPath]) * height
+            if !started {
+                path.move(to: CGPoint(x: x, y: y))
+                started = true
+            } else {
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+        }
+    }
+
+    private func timeToX(_ time: TimeInterval, width: CGFloat) -> CGFloat {
+        let duration = viewport.visibleEnd - viewport.visibleStart
+        guard duration > 0 else { return 0 }
+        return CGFloat((time - viewport.visibleStart) / duration) * width
+    }
+}
+
+// MARK: - Trim Overlay Timeline
+
+struct TrimOverlayTimelineView: View {
+    @ObservedObject var appState: AppState
+    @Binding var viewport: TimelineViewport
+    @Binding var playheadTime: TimeInterval
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let height = geo.size.height
+
+            ZStack(alignment: .leading) {
+                // Background
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.gray.opacity(0.1))
+
+                // Rally blocks (green)
+                ForEach(appState.segments.filter { $0.label == .rally }) { seg in
+                    let x = timeToX(seg.start, width: width)
+                    let w = timeToX(seg.end, width: width) - x
+                    Rectangle()
+                        .fill(Color.green.opacity(0.5))
+                        .frame(width: max(1, w), height: height)
+                        .offset(x: x)
+                }
+
+                // Trim overlays (red, semi-transparent) with drag handles
+                ForEach(appState.trimSegments) { trim in
+                    let x = timeToX(trim.start, width: width)
+                    let w = timeToX(trim.end, width: width) - x
+
+                    // Trim block
+                    Rectangle()
+                        .fill(trimColor(for: trim).opacity(0.35))
+                        .frame(width: max(1, w), height: height)
+                        .offset(x: x)
+
+                    // Left drag handle
+                    TrimDragHandle(edge: .leading)
+                        .offset(x: x - 4)
+                        .gesture(
+                            DragGesture()
+                                .onChanged { value in
+                                    let newTime = xToTime(value.location.x, width: width)
+                                    appState.updateTrimBoundary(trimID: trim.id, newStart: newTime)
+                                }
+                        )
+
+                    // Right drag handle
+                    TrimDragHandle(edge: .trailing)
+                        .offset(x: x + max(1, w) - 4)
+                        .gesture(
+                            DragGesture()
+                                .onChanged { value in
+                                    let newTime = xToTime(value.location.x, width: width)
+                                    appState.updateTrimBoundary(trimID: trim.id, newEnd: newTime)
+                                }
+                        )
+                }
+
+                // Game break bands (blue semi-transparent)
+                ForEach(appState.games.filter { $0.breakAfter != nil }) { game in
+                    if let brk = game.breakAfter {
+                        let x = timeToX(brk.start, width: width)
+                        let w = timeToX(brk.end, width: width) - x
+                        Rectangle()
+                            .fill(Color.blue.opacity(0.2))
+                            .frame(width: max(1, w), height: height)
+                            .offset(x: x)
+                            .allowsHitTesting(false)
+                    }
+                }
+
+                // Playhead
+                let px = timeToX(playheadTime, width: width)
+                Rectangle()
+                    .fill(Color.white)
+                    .frame(width: 2, height: height)
+                    .offset(x: px)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { location in
+                let time = xToTime(location.x, width: width)
+                seekTo(time)
+            }
+        }
+    }
+
+    private func timeToX(_ time: TimeInterval, width: CGFloat) -> CGFloat {
+        let duration = viewport.visibleEnd - viewport.visibleStart
+        guard duration > 0 else { return 0 }
+        return CGFloat((time - viewport.visibleStart) / duration) * width
+    }
+
+    private func xToTime(_ x: CGFloat, width: CGFloat) -> TimeInterval {
+        let duration = viewport.visibleEnd - viewport.visibleStart
+        guard width > 0 else { return viewport.visibleStart }
+        return viewport.visibleStart + Double(x / width) * duration
+    }
+
+    private func seekTo(_ time: TimeInterval) {
+        let cmTime = CMTime(seconds: time, preferredTimescale: 600)
+        appState.player?.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero)
+        playheadTime = time
+    }
+
+    private func trimColor(for trim: TrimSegment) -> Color {
+        switch trim.reviewStatus {
+        case .accepted: return .red
+        case .flagged: return .yellow
+        case .unreviewed: return .red
+        }
+    }
+}
+
+// MARK: - Trim Drag Handle
+
+struct TrimDragHandle: View {
+    let edge: HorizontalEdge
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(Color.white.opacity(0.9))
+            .frame(width: 8, height: 50)
+            .shadow(radius: 2)
+            .cursor(.resizeLeftRight)
+    }
+}
+
+extension View {
+    func cursor(_ cursor: NSCursor) -> some View {
+        onHover { hovering in
+            if hovering {
+                cursor.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+}
+
+// MARK: - Minimap
+
+struct MinimapView: View {
+    @ObservedObject var appState: AppState
+    @Binding var viewport: TimelineViewport
+    let playheadTime: TimeInterval
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let totalDuration = appState.videoMetadata?.duration ?? appState.segments.last?.end ?? 1
+
+            ZStack(alignment: .leading) {
+                // Full timeline segments
+                HStack(spacing: 0) {
+                    ForEach(appState.segments) { seg in
+                        let fraction = seg.duration / totalDuration
+                        Rectangle()
+                            .fill(seg.label == .rally ? Color.green.opacity(0.6) : Color.red.opacity(0.3))
+                            .frame(width: max(1, width * CGFloat(fraction)))
+                    }
+                }
+
+                // Viewport indicator
+                let vpStart = CGFloat(viewport.visibleStart / totalDuration) * width
+                let vpEnd = CGFloat(viewport.visibleEnd / totalDuration) * width
+                RoundedRectangle(cornerRadius: 2)
+                    .strokeBorder(Color.white.opacity(0.8), lineWidth: 1.5)
+                    .background(RoundedRectangle(cornerRadius: 2).fill(Color.white.opacity(0.1)))
+                    .frame(width: max(10, vpEnd - vpStart))
+                    .offset(x: vpStart)
+
+                // Game labels
+                ForEach(appState.games) { game in
+                    if let firstPoint = game.points.first {
+                        let gx = CGFloat(firstPoint.start / totalDuration) * width
+                        Text("G\(game.gameNumber)")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.white)
+                            .offset(x: gx + 2, y: 1)
+                    }
+                }
+
+                // Playhead
+                let px = CGFloat(playheadTime / totalDuration) * width
+                Rectangle()
+                    .fill(Color.white)
+                    .frame(width: 1)
+                    .offset(x: px)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        let fraction = Double(value.location.x / width)
+                        let center = fraction * totalDuration
+                        let halfVisible = viewport.visibleDuration / 2
+                        viewport.visibleStart = max(0, center - halfVisible)
+                        viewport.visibleEnd = min(totalDuration, center + halfVisible)
+                    }
+            )
+        }
+    }
+}
+

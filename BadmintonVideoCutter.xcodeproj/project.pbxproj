@@ -1,0 +1,557 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		037DACC7DBB40A439212D1F1 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E631C17014F8A2AD77CAA9F /* Models.swift */; };
+		057C041BB97EB0EC320A1F6C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957CDC923188260D7B13CDCA /* ContentView.swift */; };
+		21BB9C29BC55D238F9AFDE6D /* HybridSegmenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */; };
+		43E222E482AA3DC63053D866 /* Protocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD050C783FA64A3D9E43626 /* Protocols.swift */; };
+		5CC8F05945B3C9D77742DFA8 /* ModelPackageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44452A77F3373C5C02934EAD /* ModelPackageService.swift */; };
+		5CEC09D108C652EB664D8504 /* BasicFeatureExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */; };
+		5D9270847D01195C7E0987BA /* TimelineViewPlaceholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3709A2A02ADB2BAA0165B464 /* TimelineViewPlaceholder.swift */; };
+		7A3925F71EC5B1F79805679B /* BadmintonVideoCutterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C29DB557E601829A44CF1A85 /* BadmintonVideoCutterApp.swift */; };
+		94C4A7DEAC0442730297BB4C /* SegmentUtilsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB2C787EE892C2DD3A4BB3AB /* SegmentUtilsTests.swift */; };
+		9A4F95E5F49866CD7329F193 /* AnalysisPipelineImpl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38C08605E790A4BDAAB0E0A6 /* AnalysisPipelineImpl.swift */; };
+		9D16CA8A2C5594DC9869F993 /* VideoExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBBDD2F3960CFF8793CC518F /* VideoExporter.swift */; };
+		9E09384924A0D1CF7334B335 /* FeatureExtractorStub.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130FCCF3CFD4028AA5743646 /* FeatureExtractorStub.swift */; };
+		A28A73F726CF374EE5A9F60F /* SegmentUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D8E460318F1628E5D79E87 /* SegmentUtils.swift */; };
+		A28E355795F236826450CEB5 /* ContentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B4B1CB0408ED4EB709EBEE1 /* ContentViewModel.swift */; };
+		A428E005B8B038A540B94411 /* VideoImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB59F9E1011165EBB9D6991F /* VideoImporter.swift */; };
+		C4A2EC6CA9A36286981883AF /* VideoPlayerPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B5A6B029900FB0A518C78A /* VideoPlayerPane.swift */; };
+		C5319294A168FCB7B15C7A7B /* ModelManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D714636820FFCF947786C2A /* ModelManifest.swift */; };
+		ED06773894EB74D348455AF8 /* HybridSegmenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */; };
+		1A1A1A1A1A1A1A1A1A1A1A1A /* AudioAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11111111111111AA111111 /* AudioAnalyzer.swift */; };
+		2B2B2B2B2B2B2B2B2B2B2B2B /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB22222222222222BB222222 /* AppState.swift */; };
+		3C3C3C3C3C3C3C3C3C3C3C3C /* ImportTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC33333333333333CC333333 /* ImportTabView.swift */; };
+		4D4D4D4D4D4D4D4D4D4D4D4D /* AnalysisTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD44444444444444DD444444 /* AnalysisTabView.swift */; };
+		5E5E5E5E5E5E5E5E5E5E5E5E /* TimelineTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE55555555555555EE555555 /* TimelineTabView.swift */; };
+		6F6F6F6F6F6F6F6F6F6F6F6F /* RemovalStatsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF66666666666666FF666666 /* RemovalStatsTabView.swift */; };
+		7A7A7A7A7A7A7A7A7A7A7A7A /* ExportTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA77777777777777AA777777 /* ExportTabView.swift */; };
+		8B8B8B8B8B8B8B8B8B8B8B8B /* ModelsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB88888888888888BB888888 /* ModelsTabView.swift */; };
+		9C9C9C9C9C9C9C9C9C9C9C9C /* GameDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC99999999999999CC999999 /* GameDetector.swift */; };
+		ADADADADADADADADADADADAD /* PointListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDAAAAAAAAAAAAAADDAAAAAA /* PointListView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		3EC522A96FC6722F9CDF20A9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F0DEBDF4A4178601564E942F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 62D64B0DFB7FC201AF158735;
+			remoteInfo = BadmintonVideoCutter;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		00D920DBD6827DCD004CDEE2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		1254E9877D0986E05A1CF869 /* BadmintonVideoCutter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BadmintonVideoCutter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		130FCCF3CFD4028AA5743646 /* FeatureExtractorStub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureExtractorStub.swift; sourceTree = "<group>"; };
+		3709A2A02ADB2BAA0165B464 /* TimelineViewPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineViewPlaceholder.swift; sourceTree = "<group>"; };
+		38C08605E790A4BDAAB0E0A6 /* AnalysisPipelineImpl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisPipelineImpl.swift; sourceTree = "<group>"; };
+		44452A77F3373C5C02934EAD /* ModelPackageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPackageService.swift; sourceTree = "<group>"; };
+		4E631C17014F8A2AD77CAA9F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		68BBA7E7B35467555BBC16BB /* BadmintonVideoCutterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BadmintonVideoCutterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7D714636820FFCF947786C2A /* ModelManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManifest.swift; sourceTree = "<group>"; };
+		86D8E460318F1628E5D79E87 /* SegmentUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentUtils.swift; sourceTree = "<group>"; };
+		8B4B1CB0408ED4EB709EBEE1 /* ContentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentViewModel.swift; sourceTree = "<group>"; };
+		957CDC923188260D7B13CDCA /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		9BD050C783FA64A3D9E43626 /* Protocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocols.swift; sourceTree = "<group>"; };
+		C29DB557E601829A44CF1A85 /* BadmintonVideoCutterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BadmintonVideoCutterApp.swift; sourceTree = "<group>"; };
+		CB2C787EE892C2DD3A4BB3AB /* SegmentUtilsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentUtilsTests.swift; sourceTree = "<group>"; };
+		D1B5A6B029900FB0A518C78A /* VideoPlayerPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPlayerPane.swift; sourceTree = "<group>"; };
+		DB59F9E1011165EBB9D6991F /* VideoImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoImporter.swift; sourceTree = "<group>"; };
+		DBBDD2F3960CFF8793CC518F /* VideoExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoExporter.swift; sourceTree = "<group>"; };
+		E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicFeatureExtractor.swift; sourceTree = "<group>"; };
+		F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridSegmenterTests.swift; sourceTree = "<group>"; };
+		F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridSegmenter.swift; sourceTree = "<group>"; };
+		AA11111111111111AA111111 /* AudioAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAnalyzer.swift; sourceTree = "<group>"; };
+		BB22222222222222BB222222 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		CC33333333333333CC333333 /* ImportTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportTabView.swift; sourceTree = "<group>"; };
+		DD44444444444444DD444444 /* AnalysisTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisTabView.swift; sourceTree = "<group>"; };
+		EE55555555555555EE555555 /* TimelineTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineTabView.swift; sourceTree = "<group>"; };
+		FF66666666666666FF666666 /* RemovalStatsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemovalStatsTabView.swift; sourceTree = "<group>"; };
+		AA77777777777777AA777777 /* ExportTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportTabView.swift; sourceTree = "<group>"; };
+		BB88888888888888BB888888 /* ModelsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsTabView.swift; sourceTree = "<group>"; };
+		CC99999999999999CC999999 /* GameDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameDetector.swift; sourceTree = "<group>"; };
+		DDAAAAAAAAAAAAAADDAAAAAA /* PointListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointListView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		11564BAEC5C6B9861C1CD215 /* VideoIO */ = {
+			isa = PBXGroup;
+			children = (
+				DBBDD2F3960CFF8793CC518F /* VideoExporter.swift */,
+				DB59F9E1011165EBB9D6991F /* VideoImporter.swift */,
+			);
+			path = VideoIO;
+			sourceTree = "<group>";
+		};
+		1513650780834FCF44BE32A0 /* UIComponents */ = {
+			isa = PBXGroup;
+			children = (
+				DD44444444444444DD444444 /* AnalysisTabView.swift */,
+				AA77777777777777AA777777 /* ExportTabView.swift */,
+				CC33333333333333CC333333 /* ImportTabView.swift */,
+				BB88888888888888BB888888 /* ModelsTabView.swift */,
+				DDAAAAAAAAAAAAAADDAAAAAA /* PointListView.swift */,
+				FF66666666666666FF666666 /* RemovalStatsTabView.swift */,
+				EE55555555555555EE555555 /* TimelineTabView.swift */,
+				3709A2A02ADB2BAA0165B464 /* TimelineViewPlaceholder.swift */,
+				D1B5A6B029900FB0A518C78A /* VideoPlayerPane.swift */,
+			);
+			path = UIComponents;
+			sourceTree = "<group>";
+		};
+		16866753C1B2865DB68B22E7 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				BB22222222222222BB222222 /* AppState.swift */,
+				C29DB557E601829A44CF1A85 /* BadmintonVideoCutterApp.swift */,
+				957CDC923188260D7B13CDCA /* ContentView.swift */,
+				8B4B1CB0408ED4EB709EBEE1 /* ContentViewModel.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		1DB31A542A8929A431E9B42B /* DomainTests */ = {
+			isa = PBXGroup;
+			children = (
+				CB2C787EE892C2DD3A4BB3AB /* SegmentUtilsTests.swift */,
+			);
+			path = DomainTests;
+			sourceTree = "<group>";
+		};
+		28D4C9C9CE0343A30980480A /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				00D920DBD6827DCD004CDEE2 /* Info.plist */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		355A2DC2C81C5AFFCE4D290B /* BadmintonVideoCutterTests */ = {
+			isa = PBXGroup;
+			children = (
+				1DB31A542A8929A431E9B42B /* DomainTests */,
+				A629D74AEA32A2537AB31D0E /* SegmentationTests */,
+			);
+			path = BadmintonVideoCutterTests;
+			sourceTree = "<group>";
+		};
+		589E1BBFE5EC3C2AB8F1C01A = {
+			isa = PBXGroup;
+			children = (
+				C512E5E8C6529466C56B3E45 /* BadmintonVideoCutter */,
+				355A2DC2C81C5AFFCE4D290B /* BadmintonVideoCutterTests */,
+				86652540C4A5BC1A0ECD00B4 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		86652540C4A5BC1A0ECD00B4 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1254E9877D0986E05A1CF869 /* BadmintonVideoCutter.app */,
+				68BBA7E7B35467555BBC16BB /* BadmintonVideoCutterTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		88BEF754AB2D5D7C61006D1D /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				4E631C17014F8A2AD77CAA9F /* Models.swift */,
+				9BD050C783FA64A3D9E43626 /* Protocols.swift */,
+				86D8E460318F1628E5D79E87 /* SegmentUtils.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		A629D74AEA32A2537AB31D0E /* SegmentationTests */ = {
+			isa = PBXGroup;
+			children = (
+				F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */,
+			);
+			path = SegmentationTests;
+			sourceTree = "<group>";
+		};
+		C512E5E8C6529466C56B3E45 /* BadmintonVideoCutter */ = {
+			isa = PBXGroup;
+			children = (
+				16866753C1B2865DB68B22E7 /* App */,
+				88BEF754AB2D5D7C61006D1D /* Domain */,
+				F1B41CEF3586B9CADDC3D4E9 /* ModelMgmt */,
+				28D4C9C9CE0343A30980480A /* Resources */,
+				CABD3589EE9B69BAAA3CA0E1 /* Segmentation */,
+				1513650780834FCF44BE32A0 /* UIComponents */,
+				11564BAEC5C6B9861C1CD215 /* VideoIO */,
+			);
+			path = BadmintonVideoCutter;
+			sourceTree = "<group>";
+		};
+		CABD3589EE9B69BAAA3CA0E1 /* Segmentation */ = {
+			isa = PBXGroup;
+			children = (
+				38C08605E790A4BDAAB0E0A6 /* AnalysisPipelineImpl.swift */,
+				AA11111111111111AA111111 /* AudioAnalyzer.swift */,
+				E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */,
+				130FCCF3CFD4028AA5743646 /* FeatureExtractorStub.swift */,
+				CC99999999999999CC999999 /* GameDetector.swift */,
+				F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */,
+			);
+			path = Segmentation;
+			sourceTree = "<group>";
+		};
+		F1B41CEF3586B9CADDC3D4E9 /* ModelMgmt */ = {
+			isa = PBXGroup;
+			children = (
+				7D714636820FFCF947786C2A /* ModelManifest.swift */,
+				44452A77F3373C5C02934EAD /* ModelPackageService.swift */,
+			);
+			path = ModelMgmt;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3D999BA2F4896F8F7CC205B4 /* BadmintonVideoCutterTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6FE8F5BF98F71E258F6838E0 /* Build configuration list for PBXNativeTarget "BadmintonVideoCutterTests" */;
+			buildPhases = (
+				6749F4D0E9323FCA3D5003BE /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EB2AAD1A2AD5734621EAFDFD /* PBXTargetDependency */,
+			);
+			name = BadmintonVideoCutterTests;
+			packageProductDependencies = (
+			);
+			productName = BadmintonVideoCutterTests;
+			productReference = 68BBA7E7B35467555BBC16BB /* BadmintonVideoCutterTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		62D64B0DFB7FC201AF158735 /* BadmintonVideoCutter */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 437994BCB76C77B6EA1C16AE /* Build configuration list for PBXNativeTarget "BadmintonVideoCutter" */;
+			buildPhases = (
+				9B51279B5DFBA0CBE293A618 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BadmintonVideoCutter;
+			packageProductDependencies = (
+			);
+			productName = BadmintonVideoCutter;
+			productReference = 1254E9877D0986E05A1CF869 /* BadmintonVideoCutter.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		F0DEBDF4A4178601564E942F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+			};
+			buildConfigurationList = D7EDDDBD7500D9AB1A2B6BD0 /* Build configuration list for PBXProject "BadmintonVideoCutter" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 589E1BBFE5EC3C2AB8F1C01A;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				62D64B0DFB7FC201AF158735 /* BadmintonVideoCutter */,
+				3D999BA2F4896F8F7CC205B4 /* BadmintonVideoCutterTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		6749F4D0E9323FCA3D5003BE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21BB9C29BC55D238F9AFDE6D /* HybridSegmenterTests.swift in Sources */,
+				94C4A7DEAC0442730297BB4C /* SegmentUtilsTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9B51279B5DFBA0CBE293A618 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9A4F95E5F49866CD7329F193 /* AnalysisPipelineImpl.swift in Sources */,
+				7A3925F71EC5B1F79805679B /* BadmintonVideoCutterApp.swift in Sources */,
+				5CEC09D108C652EB664D8504 /* BasicFeatureExtractor.swift in Sources */,
+				057C041BB97EB0EC320A1F6C /* ContentView.swift in Sources */,
+				A28E355795F236826450CEB5 /* ContentViewModel.swift in Sources */,
+				9E09384924A0D1CF7334B335 /* FeatureExtractorStub.swift in Sources */,
+				ED06773894EB74D348455AF8 /* HybridSegmenter.swift in Sources */,
+				C5319294A168FCB7B15C7A7B /* ModelManifest.swift in Sources */,
+				5CC8F05945B3C9D77742DFA8 /* ModelPackageService.swift in Sources */,
+				037DACC7DBB40A439212D1F1 /* Models.swift in Sources */,
+				43E222E482AA3DC63053D866 /* Protocols.swift in Sources */,
+				A28A73F726CF374EE5A9F60F /* SegmentUtils.swift in Sources */,
+				5D9270847D01195C7E0987BA /* TimelineViewPlaceholder.swift in Sources */,
+				9D16CA8A2C5594DC9869F993 /* VideoExporter.swift in Sources */,
+				A428E005B8B038A540B94411 /* VideoImporter.swift in Sources */,
+				C4A2EC6CA9A36286981883AF /* VideoPlayerPane.swift in Sources */,
+				1A1A1A1A1A1A1A1A1A1A1A1A /* AudioAnalyzer.swift in Sources */,
+				2B2B2B2B2B2B2B2B2B2B2B2B /* AppState.swift in Sources */,
+				3C3C3C3C3C3C3C3C3C3C3C3C /* ImportTabView.swift in Sources */,
+				4D4D4D4D4D4D4D4D4D4D4D4D /* AnalysisTabView.swift in Sources */,
+				5E5E5E5E5E5E5E5E5E5E5E5E /* TimelineTabView.swift in Sources */,
+				6F6F6F6F6F6F6F6F6F6F6F6F /* RemovalStatsTabView.swift in Sources */,
+				7A7A7A7A7A7A7A7A7A7A7A7A /* ExportTabView.swift in Sources */,
+				8B8B8B8B8B8B8B8B8B8B8B8B /* ModelsTabView.swift in Sources */,
+				9C9C9C9C9C9C9C9C9C9C9C9C /* GameDetector.swift in Sources */,
+				ADADADADADADADADADADADAD /* PointListView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EB2AAD1A2AD5734621EAFDFD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 62D64B0DFB7FC201AF158735 /* BadmintonVideoCutter */;
+			targetProxy = 3EC522A96FC6722F9CDF20A9 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		2119BBF09BB7F767F9FFACAA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		29F9D310EC75B1781AA88E2F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.buddy.badmintonvideocutter.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BadmintonVideoCutter.app/Contents/MacOS/BadmintonVideoCutter";
+			};
+			name = Release;
+		};
+		57B12CE675D9EA98ECF97210 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BadmintonVideoCutter/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.buddy.badmintonvideocutter;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		75970CA3C6F292DD4E11CF82 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		C36EB82B9DDA79DCA2A0DE97 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.buddy.badmintonvideocutter.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BadmintonVideoCutter.app/Contents/MacOS/BadmintonVideoCutter";
+			};
+			name = Debug;
+		};
+		F6B1A9C91B7A424D9BC1C9A1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BadmintonVideoCutter/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.buddy.badmintonvideocutter;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		437994BCB76C77B6EA1C16AE /* Build configuration list for PBXNativeTarget "BadmintonVideoCutter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				57B12CE675D9EA98ECF97210 /* Debug */,
+				F6B1A9C91B7A424D9BC1C9A1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6FE8F5BF98F71E258F6838E0 /* Build configuration list for PBXNativeTarget "BadmintonVideoCutterTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C36EB82B9DDA79DCA2A0DE97 /* Debug */,
+				29F9D310EC75B1781AA88E2F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D7EDDDBD7500D9AB1A2B6BD0 /* Build configuration list for PBXProject "BadmintonVideoCutter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				75970CA3C6F292DD4E11CF82 /* Debug */,
+				2119BBF09BB7F767F9FFACAA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = F0DEBDF4A4178601564E942F /* Project object */;
+}
