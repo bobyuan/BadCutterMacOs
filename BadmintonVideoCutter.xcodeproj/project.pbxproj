@@ -37,6 +37,7 @@
 		ADADADADADADADADADADADAD /* PointListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDAAAAAAAAAAAAAADDAAAAAA /* PointListView.swift */; };
 		E1E1E1E1E1E1E1E1E1E1E1E1 /* HitClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1F1F1F1F1F1F1F1F1F1F1F1 /* HitClassifier.swift */; };
 		E2E2E2E2E2E2E2E2E2E2E2E2 /* HitModelTrainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2F2F2F2F2F2F2F2F2F2F2F2 /* HitModelTrainer.swift */; };
+		E3E3E3E3E3E3E3E3E3E3E3E3 /* ServeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3F3F3F3F3F3F3F3F3F3F3F3 /* ServeDetector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -83,6 +84,7 @@
 		DDAAAAAAAAAAAAAADDAAAAAA /* PointListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointListView.swift; sourceTree = "<group>"; };
 		F1F1F1F1F1F1F1F1F1F1F1F1 /* HitClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitClassifier.swift; sourceTree = "<group>"; };
 		F2F2F2F2F2F2F2F2F2F2F2F2 /* HitModelTrainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitModelTrainer.swift; sourceTree = "<group>"; };
+		F3F3F3F3F3F3F3F3F3F3F3F3 /* ServeDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeDetector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -208,6 +210,7 @@
 				F1F1F1F1F1F1F1F1F1F1F1F1 /* HitClassifier.swift */,
 				F2F2F2F2F2F2F2F2F2F2F2F2 /* HitModelTrainer.swift */,
 				F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */,
+				F3F3F3F3F3F3F3F3F3F3F3F3 /* ServeDetector.swift */,
 			);
 			path = Segmentation;
 			sourceTree = "<group>";
@@ -330,6 +333,7 @@
 				ADADADADADADADADADADADAD /* PointListView.swift in Sources */,
 				E1E1E1E1E1E1E1E1E1E1E1E1 /* HitClassifier.swift in Sources */,
 				E2E2E2E2E2E2E2E2E2E2E2E2 /* HitModelTrainer.swift in Sources */,
+				E3E3E3E3E3E3E3E3E3E3E3E3 /* ServeDetector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

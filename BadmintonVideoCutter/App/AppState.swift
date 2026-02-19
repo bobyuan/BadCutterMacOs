@@ -20,6 +20,10 @@ final class AppState: ObservableObject {
     @Published var sensitivity: SensitivityPreset = .aggressive
     @Published var isAnalyzing = false
 
+    // MARK: - Serve & Score State
+    @Published var serveSides: [UUID: ServeDetector.ServeSide] = [:]
+    @Published var pointScores: [UUID: ServeDetector.PointScore] = [:]
+
     // MARK: - Hit Model State
     @Published var hitModelStatus: HitModelStatus = .notTrained
 
@@ -216,6 +220,7 @@ final class AppState: ObservableObject {
 
                 deriveGameStructure()
                 deriveTrimSegments()
+                detectServesAndScores()
 
                 let rallyCount = processed.filter { $0.label == .rally }.count
                 let elapsed = Date().timeIntervalSince(analysisStartTime ?? Date())
@@ -250,7 +255,7 @@ final class AppState: ObservableObject {
     // MARK: - Game Structure
 
     func deriveGameStructure() {
-        games = GameDetector.detectGames(from: segments)
+        games = GameDetector.detectGames(from: segments, featureFrames: featureFrames)
     }
 
     func setPointReviewStatus(pointID: UUID, status: PointReviewStatus) {
@@ -258,9 +263,47 @@ final class AppState: ObservableObject {
             if let pointIdx = games[gameIdx].points.firstIndex(where: { $0.id == pointID }) {
                 games[gameIdx].points[pointIdx].reviewStatus = status
                 deriveTrimSegments()
+                computeAllScores()
                 return
             }
         }
+    }
+
+    // MARK: - Serve Detection & Scoring
+
+    func detectServesAndScores() {
+        guard let url = currentAssetURL, !games.isEmpty else { return }
+        let allPoints = games.flatMap(\.points)
+
+        Task {
+            let sides = await ServeDetector.detectServes(videoURL: url, points: allPoints)
+            self.serveSides = sides
+            computeAllScores()
+        }
+    }
+
+    func computeAllScores() {
+        var allScores: [UUID: ServeDetector.PointScore] = [:]
+
+        for (gameIdx, game) in games.enumerated() {
+            // For the last point of this game, check first serve of next game
+            let nextGameFirstServe: ServeDetector.ServeSide?
+            if gameIdx < games.count - 1 {
+                let nextGameActivePoint = games[gameIdx + 1].points.first { $0.reviewStatus != .deleted }
+                nextGameFirstServe = nextGameActivePoint.flatMap { serveSides[$0.id] }
+            } else {
+                nextGameFirstServe = nil
+            }
+
+            let scores = ServeDetector.computeScores(
+                points: game.points,
+                serveSides: serveSides,
+                nextGameFirstServe: nextGameFirstServe
+            )
+            allScores.merge(scores) { _, new in new }
+        }
+
+        pointScores = allScores
     }
 
     // MARK: - Trim Segments

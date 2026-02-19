@@ -40,6 +40,7 @@ struct PointListView: View {
                                     point: point,
                                     isSelected: point.id == selectedPointID,
                                     playheadTime: playheadTime,
+                                    score: appState.pointScores[point.id],
                                     onToggleDelete: {
                                         let newStatus: PointReviewStatus = point.reviewStatus == .deleted ? .unreviewed : .deleted
                                         appState.setPointReviewStatus(pointID: point.id, status: newStatus)
@@ -50,7 +51,7 @@ struct PointListView: View {
                                 )
                             }
                         } header: {
-                            GameSectionHeader(game: game)
+                            GameSectionHeader(game: game, pointScores: appState.pointScores)
                         }
 
                         if game.breakAfter != nil && game.id != appState.games.last?.id {
@@ -84,6 +85,7 @@ struct PointRow: View {
     let point: GamePoint
     var isSelected: Bool = false
     var playheadTime: TimeInterval = 0
+    var score: ServeDetector.PointScore?
     let onToggleDelete: () -> Void
     let onTap: () -> Void
 
@@ -103,6 +105,13 @@ struct PointRow: View {
                 Text("#\(point.pointNumber)")
                     .font(.caption).bold()
                     .frame(width: 30, alignment: .leading)
+
+                if let score = score {
+                    Text(score.display)
+                        .font(.caption).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, alignment: .center)
+                }
 
                 Text("\(formatTime(point.start)) – \(formatTime(point.end))")
                     .font(.callout).monospacedDigit()
@@ -157,12 +166,31 @@ struct PointRow: View {
 
 struct GameSectionHeader: View {
     let game: Game
+    var pointScores: [UUID: ServeDetector.PointScore] = [:]
+
+    /// Final score for this game: the score after the last active point.
+    private var finalScore: ServeDetector.PointScore? {
+        let activePoints = game.points.filter { $0.reviewStatus != .deleted }
+        guard let lastPoint = activePoints.last else { return nil }
+        return pointScores[lastPoint.id]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Text("Game \(game.gameNumber) — \(game.activePointCount) points")
+                Text("Game \(game.gameNumber)")
                     .font(.callout).bold()
+
+                if let score = finalScore {
+                    Text("(\(score.display))")
+                        .font(.callout).bold()
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("— \(game.activePointCount) points")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
                 validationIcon
             }
             if let message = game.validationMessage {
