@@ -15,7 +15,7 @@ struct TimelineTabView: View {
             VStack(spacing: 12) {
                 // Video player
                 if let player = appState.player {
-                    VideoPlayer(player: player)
+                    NativePlayerView(player: player)
                         .frame(minHeight: 280)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .onAppear { setupTimeObserver(player) }
@@ -80,7 +80,11 @@ struct TimelineTabView: View {
             .onChange(of: appState.videoMetadata?.duration) { _, _ in resetViewport() }
 
             // Right panel: Point list
-            PointListView(appState: appState) { point in
+            PointListView(
+                appState: appState,
+                selectedPointID: selectedPointID,
+                playheadTime: playheadTime
+            ) { point in
                 previewPoint(point)
             }
             .frame(minWidth: 280, maxWidth: 350)

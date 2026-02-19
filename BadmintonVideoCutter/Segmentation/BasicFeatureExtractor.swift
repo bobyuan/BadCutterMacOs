@@ -12,15 +12,15 @@ final class BasicFeatureExtractor: FeatureExtractor {
     }
 
     func extractFeatures(from videoURL: URL) async throws -> [FeatureFrame] {
-        return try await extractFeatures(from: videoURL, progress: nil)
+        return try await extractFeatures(from: videoURL, mlModelURL: nil, progress: nil)
     }
 
-    func extractFeatures(from videoURL: URL, progress: ProgressCallbacks?) async throws -> [FeatureFrame] {
+    func extractFeatures(from videoURL: URL, mlModelURL: URL? = nil, progress: ProgressCallbacks?) async throws -> [FeatureFrame] {
         let asset = AVURLAsset(url: videoURL)
         let totalDuration = try await asset.load(.duration).seconds
 
         async let videoFrames = extractVideoFeatures(from: videoURL, totalDuration: totalDuration, progress: progress)
-        async let audioFeatures = audioAnalyzer.analyzeAudio(from: videoURL) { fraction in
+        async let audioFeatures = audioAnalyzer.analyzeAudio(from: videoURL, mlModelURL: mlModelURL) { fraction in
             Task { @MainActor in
                 progress?.onAudioProgress(fraction)
             }

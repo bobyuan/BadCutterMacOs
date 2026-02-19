@@ -9,7 +9,7 @@ protocol SegmentClassifier {
 }
 
 protocol SegmentPostProcessor {
-    func postProcess(segments: [TimeSegment], config: AnalysisConfig) -> [TimeSegment]
+    func postProcess(segments: [TimeSegment], frames: [FeatureFrame], config: AnalysisConfig) -> [TimeSegment]
 }
 
 protocol AnalysisPipeline {

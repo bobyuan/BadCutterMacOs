@@ -14,6 +14,6 @@ final class AnalysisPipelineImpl: AnalysisPipeline {
     func analyze(videoURL: URL, config: AnalysisConfig) async throws -> [TimeSegment] {
         let frames = try await extractor.extractFeatures(from: videoURL)
         let segments = classifier.classify(frames: frames, config: config)
-        return postProcessor.postProcess(segments: segments, config: config)
+        return postProcessor.postProcess(segments: segments, frames: frames, config: config)
     }
 }

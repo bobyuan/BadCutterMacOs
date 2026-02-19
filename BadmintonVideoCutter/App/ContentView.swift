@@ -59,7 +59,7 @@ struct ContentView: View {
                 }
                 .tag(AppTab.export)
 
-            ModelsTabView()
+            ModelsTabView(appState: appState)
                 .tabItem {
                     Label(AppTab.models.rawValue, systemImage: AppTab.models.icon)
                 }

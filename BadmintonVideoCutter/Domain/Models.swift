@@ -70,12 +70,14 @@ enum SensitivityPreset: String, CaseIterable, Codable, Identifiable {
 
 struct AnalysisConfig: Codable {
     var minRallyDuration: TimeInterval = 1.0
-    var minBetweenPointsDuration: TimeInterval = 3.0
-    var flipHysteresisSeconds: TimeInterval = 1.5
+    var minBetweenPointsDuration: TimeInterval = 1.5
+    var flipHysteresisSeconds: TimeInterval = 1.0
     var rallyPercentile: Double = 0.68
     var motionWeight: Double = 0.5
     var audioWeight: Double = 0.5
     var preRollSeconds: TimeInterval = 1.5
+    var maxExpectedRallyDuration: TimeInterval = 25.0
+    var minDipDuration: TimeInterval = 1.5
 }
 
 // MARK: - Point Review & Game Structure
@@ -179,6 +181,15 @@ struct TrimSegment: Identifiable, Codable, Equatable {
     static func == (lhs: TrimSegment, rhs: TrimSegment) -> Bool {
         lhs.id == rhs.id
     }
+}
+
+// MARK: - Hit Detection Model
+
+enum HitModelStatus {
+    case notTrained
+    case training(progress: String)
+    case trained(accuracy: Double, clipCount: Int)
+    case failed(error: String)
 }
 
 // MARK: - Audio Features

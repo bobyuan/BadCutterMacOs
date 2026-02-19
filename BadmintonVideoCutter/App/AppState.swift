@@ -20,6 +20,22 @@ final class AppState: ObservableObject {
     @Published var sensitivity: SensitivityPreset = .aggressive
     @Published var isAnalyzing = false
 
+    // MARK: - Hit Model State
+    @Published var hitModelStatus: HitModelStatus = .notTrained
+
+    var hitModelURL: URL? {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let modelDir = appSupport.appendingPathComponent("BadmintonVideoCutter")
+        let modelURL = modelDir.appendingPathComponent("hit_classifier.mlmodelc")
+        return FileManager.default.fileExists(atPath: modelURL.path) ? modelURL : nil
+    }
+
+    private var hitModelOutputURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let modelDir = appSupport.appendingPathComponent("BadmintonVideoCutter")
+        return modelDir.appendingPathComponent("hit_classifier.mlmodelc")
+    }
+
     // MARK: - Export State
     @Published var exportConfig = ExportConfig()
     @Published var isExporting = false
@@ -30,6 +46,13 @@ final class AppState: ObservableObject {
     @Published var isShowingFileImporter = false
 
     private let exporter = VideoExporter()
+
+    init() {
+        // Check if a trained model already exists
+        if FileManager.default.fileExists(atPath: hitModelOutputURL.path) {
+            hitModelStatus = .trained(accuracy: 0, clipCount: 0)
+        }
+    }
 
     // MARK: - Computed Properties
 
@@ -182,13 +205,13 @@ final class AppState: ObservableObject {
                         self?.analysisProgress.videoProgress = p
                     }
                 )
-                let frames = try await extractor.extractFeatures(from: url, progress: callbacks)
+                let frames = try await extractor.extractFeatures(from: url, mlModelURL: hitModelURL, progress: callbacks)
                 self.featureFrames = frames
 
                 analysisProgress.stage = .finalizing
                 let classifier = HybridSegmenter()
                 let rawSegments = classifier.classify(frames: frames, config: config)
-                let processed = classifier.postProcess(segments: rawSegments, config: config)
+                let processed = classifier.postProcess(segments: rawSegments, frames: frames, config: config)
                 self.segments = processed
 
                 deriveGameStructure()
@@ -297,6 +320,50 @@ final class AppState: ObservableObject {
         if let newEnd = newEnd {
             trimSegments[index].end = min(duration, max(newEnd, trimSegments[index].start + 0.1))
         }
+    }
+
+    // MARK: - Export
+
+    // MARK: - Hit Model Training
+
+    func trainHitDetector() {
+        guard let url = currentAssetURL else {
+            lastErrorMessage = "Load a video first."
+            return
+        }
+        guard !games.isEmpty else {
+            lastErrorMessage = "Analyze a video and review points before training."
+            return
+        }
+
+        hitModelStatus = .training(progress: "Starting...")
+
+        Task {
+            do {
+                let result = try await HitModelTrainer.train(
+                    videoURL: url,
+                    games: games,
+                    featureFrames: self.featureFrames,
+                    outputModelURL: hitModelOutputURL,
+                    progress: { [weak self] msg in
+                        Task { @MainActor [weak self] in
+                            self?.hitModelStatus = .training(progress: msg)
+                        }
+                    }
+                )
+                hitModelStatus = .trained(accuracy: result.accuracy, clipCount: result.clipCount)
+                statusMessage = String(format: "Model trained: %.0f%% accuracy from %d clips", result.accuracy * 100, result.clipCount)
+            } catch {
+                hitModelStatus = .failed(error: error.localizedDescription)
+                lastErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func deleteHitModel() {
+        try? FileManager.default.removeItem(at: hitModelOutputURL)
+        hitModelStatus = .notTrained
+        statusMessage = "Hit detection model deleted."
     }
 
     // MARK: - Export

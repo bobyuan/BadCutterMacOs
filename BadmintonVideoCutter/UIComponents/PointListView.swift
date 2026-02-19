@@ -2,6 +2,8 @@ import SwiftUI
 
 struct PointListView: View {
     @ObservedObject var appState: AppState
+    var selectedPointID: UUID?
+    var playheadTime: TimeInterval = 0
     var onSelectPoint: ((GamePoint) -> Void)?
 
     var body: some View {
@@ -34,12 +36,18 @@ struct PointListView: View {
                     ForEach(appState.games) { game in
                         Section {
                             ForEach(game.points) { point in
-                                PointRow(point: point, onToggleDelete: {
-                                    let newStatus: PointReviewStatus = point.reviewStatus == .deleted ? .unreviewed : .deleted
-                                    appState.setPointReviewStatus(pointID: point.id, status: newStatus)
-                                }, onTap: {
-                                    onSelectPoint?(point)
-                                })
+                                PointRow(
+                                    point: point,
+                                    isSelected: point.id == selectedPointID,
+                                    playheadTime: playheadTime,
+                                    onToggleDelete: {
+                                        let newStatus: PointReviewStatus = point.reviewStatus == .deleted ? .unreviewed : .deleted
+                                        appState.setPointReviewStatus(pointID: point.id, status: newStatus)
+                                    },
+                                    onTap: {
+                                        onSelectPoint?(point)
+                                    }
+                                )
                             }
                         } header: {
                             GameSectionHeader(game: game)
@@ -74,34 +82,66 @@ struct PointListView: View {
 
 struct PointRow: View {
     let point: GamePoint
+    var isSelected: Bool = false
+    var playheadTime: TimeInterval = 0
     let onToggleDelete: () -> Void
     let onTap: () -> Void
 
+    private var progress: Double {
+        guard point.duration > 0 else { return 0 }
+        let elapsed = playheadTime - point.start
+        return max(0, min(1, elapsed / point.duration))
+    }
+
+    private var isPlaying: Bool {
+        isSelected && playheadTime >= point.start && playheadTime <= point.end
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            Text("#\(point.pointNumber)")
-                .font(.caption).bold()
-                .frame(width: 30, alignment: .leading)
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Text("#\(point.pointNumber)")
+                    .font(.caption).bold()
+                    .frame(width: 30, alignment: .leading)
 
-            Text("\(formatTime(point.start)) – \(formatTime(point.end))")
-                .font(.callout).monospacedDigit()
+                Text("\(formatTime(point.start)) – \(formatTime(point.end))")
+                    .font(.callout).monospacedDigit()
 
-            Text(String(format: "(%.1fs)", point.duration))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text(String(format: "(%.1fs)", point.duration))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-            Spacer()
+                Spacer()
 
-            Button(action: onToggleDelete) {
-                Image(systemName: point.reviewStatus == .deleted ? "arrow.uturn.backward" : "xmark")
-                    .font(.caption2)
-                    .foregroundStyle(point.reviewStatus == .deleted ? .blue : .secondary)
+                Button(action: onToggleDelete) {
+                    Image(systemName: point.reviewStatus == .deleted ? "arrow.uturn.backward" : "xmark")
+                        .font(.caption2)
+                        .foregroundStyle(point.reviewStatus == .deleted ? .blue : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(point.reviewStatus == .deleted ? "Restore point" : "Delete point")
             }
-            .buttonStyle(.borderless)
-            .help(point.reviewStatus == .deleted ? "Restore point" : "Delete point")
+
+            // Progress bar
+            if isSelected {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(Color.primary.opacity(0.08))
+                            .frame(height: 3)
+
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(isPlaying ? Color.accentColor : Color.accentColor.opacity(0.5))
+                            .frame(width: geo.size.width * CGFloat(progress), height: 3)
+                    }
+                }
+                .frame(height: 3)
+            }
         }
+        .padding(.vertical, isSelected ? 2 : 0)
         .opacity(point.reviewStatus == .deleted ? 0.4 : (0.5 + point.confidence * 0.5))
         .strikethrough(point.reviewStatus == .deleted)
+        .listRowBackground(isSelected ? Color.accentColor.opacity(0.12) : nil)
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
     }

@@ -35,6 +35,8 @@
 		8B8B8B8B8B8B8B8B8B8B8B8B /* ModelsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB88888888888888BB888888 /* ModelsTabView.swift */; };
 		9C9C9C9C9C9C9C9C9C9C9C9C /* GameDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC99999999999999CC999999 /* GameDetector.swift */; };
 		ADADADADADADADADADADADAD /* PointListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDAAAAAAAAAAAAAADDAAAAAA /* PointListView.swift */; };
+		E1E1E1E1E1E1E1E1E1E1E1E1 /* HitClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1F1F1F1F1F1F1F1F1F1F1F1 /* HitClassifier.swift */; };
+		E2E2E2E2E2E2E2E2E2E2E2E2 /* HitModelTrainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2F2F2F2F2F2F2F2F2F2F2F2 /* HitModelTrainer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -79,6 +81,8 @@
 		BB88888888888888BB888888 /* ModelsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsTabView.swift; sourceTree = "<group>"; };
 		CC99999999999999CC999999 /* GameDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameDetector.swift; sourceTree = "<group>"; };
 		DDAAAAAAAAAAAAAADDAAAAAA /* PointListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointListView.swift; sourceTree = "<group>"; };
+		F1F1F1F1F1F1F1F1F1F1F1F1 /* HitClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitClassifier.swift; sourceTree = "<group>"; };
+		F2F2F2F2F2F2F2F2F2F2F2F2 /* HitModelTrainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitModelTrainer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -201,6 +205,8 @@
 				E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */,
 				130FCCF3CFD4028AA5743646 /* FeatureExtractorStub.swift */,
 				CC99999999999999CC999999 /* GameDetector.swift */,
+				F1F1F1F1F1F1F1F1F1F1F1F1 /* HitClassifier.swift */,
+				F2F2F2F2F2F2F2F2F2F2F2F2 /* HitModelTrainer.swift */,
 				F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */,
 			);
 			path = Segmentation;
@@ -322,6 +328,8 @@
 				8B8B8B8B8B8B8B8B8B8B8B8B /* ModelsTabView.swift in Sources */,
 				9C9C9C9C9C9C9C9C9C9C9C9C /* GameDetector.swift in Sources */,
 				ADADADADADADADADADADADAD /* PointListView.swift in Sources */,
+				E1E1E1E1E1E1E1E1E1E1E1E1 /* HitClassifier.swift in Sources */,
+				E2E2E2E2E2E2E2E2E2E2E2E2 /* HitModelTrainer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

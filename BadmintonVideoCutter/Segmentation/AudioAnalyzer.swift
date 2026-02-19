@@ -7,14 +7,19 @@ final class AudioAnalyzer: Sendable {
     struct Config {
         var windowSize: Int = 2048
         var hopSize: Int = 1024
-        var rallyWindowSeconds: TimeInterval = 2.0
+        var rallyWindowSeconds: TimeInterval = 3.0
         var onsetThresholdMultiplier: Double = 1.5
         var medianWindowSize: Int = 15
         var lowFreqBin: Int = 2    // ~1 kHz at 44.1kHz / 2048
         var highFreqBin: Int = 186 // ~8 kHz at 44.1kHz / 2048
         // Minimum flux magnitude to count as an onset (filters footsteps/talking).
-        // Expressed as fraction of normalized flux [0,1]. Onsets below this are ignored.
-        var onsetIntensityFloor: Double = 0.15
+        var onsetIntensityFloor: Double = 0.18
+        // Minimum time between onsets in seconds (debounce). Two hits can't be faster than this.
+        var minOnsetGap: TimeInterval = 0.3
+        // Max time between consecutive hits to count as same rally sequence
+        var maxHitGap: TimeInterval = 3.5
+        // Minimum hits in a cluster to count as a rally sequence
+        var minClusterSize: Int = 3
     }
 
     private let config: Config
@@ -23,7 +28,21 @@ final class AudioAnalyzer: Sendable {
         self.config = config
     }
 
-    func analyzeAudio(from videoURL: URL, onProgress: (@Sendable (Double) -> Void)? = nil) async throws -> [AudioFeature] {
+    func analyzeAudio(from videoURL: URL, mlModelURL: URL? = nil, onProgress: (@Sendable (Double) -> Void)? = nil) async throws -> [AudioFeature] {
+        // ML path: use trained CoreML model via SoundAnalysis if available
+        if let modelURL = mlModelURL, FileManager.default.fileExists(atPath: modelURL.path) {
+            do {
+                onProgress?(0.1)
+                let features = try await HitClassifier.classify(videoURL: videoURL, modelURL: modelURL)
+                onProgress?(1.0)
+                return features
+            } catch {
+                // Fall back to heuristic if ML classification fails
+                print("ML classification failed, falling back to heuristic: \(error.localizedDescription)")
+            }
+        }
+
+        // Heuristic fallback path
         let asset = AVURLAsset(url: videoURL)
         guard let audioTrack = try await asset.loadTracks(withMediaType: .audio).first else {
             return []
@@ -38,7 +57,7 @@ final class AudioAnalyzer: Sendable {
         onProgress?(0.6)
         let spectralFlux = computeSpectralFlux(samples: pcmData.samples, sampleRate: pcmData.sampleRate)
         onProgress?(0.8)
-        let onsets = detectOnsets(spectralFlux: spectralFlux)
+        let onsets = detectOnsets(spectralFlux: spectralFlux, sampleRate: pcmData.sampleRate)
         let rallyScores = computeRallyScores(
             onsets: onsets,
             totalFrames: rmsValues.count,
@@ -202,13 +221,16 @@ final class AudioAnalyzer: Sendable {
 
     // MARK: - Onset Detection
 
-    private func detectOnsets(spectralFlux: [Double]) -> [Bool] {
+    private func detectOnsets(spectralFlux: [Double], sampleRate: Double) -> [Bool] {
         guard !spectralFlux.isEmpty else { return [] }
 
         let medianW = config.medianWindowSize
         let multiplier = config.onsetThresholdMultiplier
         let intensityFloor = config.onsetIntensityFloor
+        let minGapFrames = Int(config.minOnsetGap * sampleRate / Double(config.hopSize))
         var onsets = [Bool](repeating: false, count: spectralFlux.count)
+
+        var lastOnsetFrame = -minGapFrames  // allow first onset immediately
 
         for i in 0..<spectralFlux.count {
             let start = max(0, i - medianW / 2)
@@ -217,25 +239,91 @@ final class AudioAnalyzer: Sendable {
             let median = window[window.count / 2]
             let threshold = median * multiplier + 0.01
 
-            // Must exceed both the adaptive threshold AND the absolute intensity floor.
-            // This filters out weak transients from footsteps, talking, bird pickup etc.
-            onsets[i] = spectralFlux[i] > threshold && spectralFlux[i] >= intensityFloor
+            let isOnset = spectralFlux[i] > threshold && spectralFlux[i] >= intensityFloor
+            // Debounce: enforce minimum gap between onsets.
+            // Two shuttlecock hits can't happen faster than ~0.3s.
+            if isOnset && (i - lastOnsetFrame) >= minGapFrames {
+                onsets[i] = true
+                lastOnsetFrame = i
+            }
         }
 
         return onsets
     }
 
-    // MARK: - Rally Score
+    // MARK: - Rally Score (Cluster-based)
 
+    /// Identifies clusters of regular hits (onsets spaced 0.3-3.5s apart),
+    /// then scores each frame based on proximity to these clusters.
+    /// Isolated onsets (footsteps, bird pickup) are filtered out.
     private func computeRallyScores(onsets: [Bool], totalFrames: Int, sampleRate: Double) -> [Double] {
         guard !onsets.isEmpty else { return [] }
 
-        let framesPerRallyWindow = Int(config.rallyWindowSeconds * sampleRate / Double(config.hopSize))
+        let hopSec = Double(config.hopSize) / sampleRate
+
+        // Step 1: Extract onset frame indices
+        let onsetFrames = onsets.indices.filter { onsets[$0] }
+        guard !onsetFrames.isEmpty else {
+            return [Double](repeating: 0, count: onsets.count)
+        }
+
+        // Step 2: Build onset clusters — groups of onsets where consecutive
+        // onsets are within maxHitGap of each other
+        let maxGapFrames = Int(config.maxHitGap / hopSec)
+        var clusters: [[Int]] = []
+        var currentCluster: [Int] = [onsetFrames[0]]
+
+        for i in 1..<onsetFrames.count {
+            let gap = onsetFrames[i] - onsetFrames[i - 1]
+            if gap <= maxGapFrames {
+                currentCluster.append(onsetFrames[i])
+            } else {
+                clusters.append(currentCluster)
+                currentCluster = [onsetFrames[i]]
+            }
+        }
+        clusters.append(currentCluster)
+
+        // Step 3: Filter — only keep clusters with enough hits (minClusterSize).
+        // Small clusters are likely noise (isolated footstep, door slam, etc.)
+        let rallyClusters = clusters.filter { $0.count >= config.minClusterSize }
+
+        // Step 4: Build rally ranges from clusters.
+        // Each cluster defines a rally from its first onset to its last onset.
+        struct RallyRange {
+            var startFrame: Int
+            var endFrame: Int
+            var hitCount: Int
+        }
+
+        let rallyRanges = rallyClusters.map { cluster in
+            RallyRange(startFrame: cluster.first!, endFrame: cluster.last!, hitCount: cluster.count)
+        }
+
+        // Step 5: Score each frame.
+        // Frames inside a rally range get a score based on local onset density.
+        // Frames outside get 0.
+        let rallyWindow = Int(config.rallyWindowSeconds / hopSec)
         var scores = [Double](repeating: 0, count: onsets.count)
 
+        // Mark frames within rally ranges
+        var inRally = [Bool](repeating: false, count: onsets.count)
+        for range in rallyRanges {
+            // Extend slightly beyond first/last hit to cover the full rally
+            let pad = rallyWindow / 2
+            let lo = max(0, range.startFrame - pad)
+            let hi = min(onsets.count - 1, range.endFrame + pad)
+            for f in lo...hi {
+                inRally[f] = true
+            }
+        }
+
+        // Compute onset density only within rally regions
         for i in 0..<onsets.count {
-            let start = max(0, i - framesPerRallyWindow / 2)
-            let end = min(onsets.count, i + framesPerRallyWindow / 2 + 1)
+            guard inRally[i] else { continue }
+
+            let start = max(0, i - rallyWindow / 2)
+            let end = min(onsets.count, i + rallyWindow / 2 + 1)
             let windowSize = end - start
             guard windowSize > 0 else { continue }
 
