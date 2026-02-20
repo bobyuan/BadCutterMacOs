@@ -4,17 +4,11 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     func classify(frames: [FeatureFrame], config: AnalysisConfig) -> [TimeSegment] {
         guard frames.count > 1 else { return [] }
 
-        let mw = config.motionWeight
-        let aw = config.audioWeight
-        let totalWeight = mw + aw
-        let normalizedMotionWeight = totalWeight > 0 ? mw / totalWeight : 0.5
-        let normalizedAudioWeight = totalWeight > 0 ? aw / totalWeight : 0.5
-
-        // Pure additive scoring: motion is the primary signal, audio is supplementary.
-        // No multiplicative term — it caused audio=0 to veto active rallies,
-        // cutting the combined score by 55% even when motion clearly indicated play.
+        // Motion is the full base signal (100%). Audio is a bonus that can only help,
+        // never penalize. When audio=0 during active play, the score is unaffected.
+        let audioBonus = config.audioWeight
         let combinedScores = frames.map { frame in
-            normalizedMotionWeight * frame.motionScore + normalizedAudioWeight * frame.audioScore
+            min(frame.motionScore + audioBonus * frame.audioScore, 1.0)
         }
 
         let threshold = percentile(combinedScores, p: config.rallyPercentile)
@@ -65,15 +59,11 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     private func splitLongRallies(segments: [TimeSegment], frames: [FeatureFrame], config: AnalysisConfig) -> [TimeSegment] {
         guard !frames.isEmpty else { return segments }
 
-        let mw = config.motionWeight
-        let aw = config.audioWeight
-        let totalWeight = mw + aw
-        let normalizedMotionWeight = totalWeight > 0 ? mw / totalWeight : 0.5
-        let normalizedAudioWeight = totalWeight > 0 ? aw / totalWeight : 0.5
+        let audioBonus = config.audioWeight
 
         // Compute classification threshold (same as classify)
         let allScores = frames.map { frame -> Double in
-            normalizedMotionWeight * frame.motionScore + normalizedAudioWeight * frame.audioScore
+            min(frame.motionScore + audioBonus * frame.audioScore, 1.0)
         }
         let classificationThreshold = percentile(allScores, p: config.rallyPercentile)
         let dipScoreThreshold = classificationThreshold * 0.7
@@ -95,7 +85,7 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
 
             // Compute combined scores for these frames
             let scores = rallyFrames.map { frame -> Double in
-                normalizedMotionWeight * frame.motionScore + normalizedAudioWeight * frame.audioScore
+                min(frame.motionScore + audioBonus * frame.audioScore, 1.0)
             }
 
             // Smooth with rolling average (window ~1s = 5 frames at 200ms)
