@@ -11,15 +11,16 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         let normalizedAudioWeight = totalWeight > 0 ? aw / totalWeight : 0.5
 
         // Hybrid scoring: blend additive + multiplicative.
-        // Additive: catches rallies where one signal dominates.
+        // Additive: catches rallies where one signal dominates (e.g., short 1-2 hit
+        //   rallies that have high motion but no audio cluster).
         // Multiplicative: suppresses cases where only one signal is high
         //   (e.g., casual hit during bird pickup = high audio, low motion).
+        // 70/30 blend ensures motion-only frames (short rallies) still get decent scores
+        // rather than being vetoed by zero audio.
         let combinedScores = frames.map { frame in
             let additive = normalizedMotionWeight * frame.motionScore + normalizedAudioWeight * frame.audioScore
             let multiplicative = sqrt(frame.motionScore * frame.audioScore)
-            // Blend: 40% additive + 60% multiplicative.
-            // This ensures both signals must be present for a high score.
-            return 0.4 * additive + 0.6 * multiplicative
+            return 0.7 * additive + 0.3 * multiplicative
         }
 
         let threshold = percentile(combinedScores, p: config.rallyPercentile)
@@ -80,7 +81,7 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         let allScores = frames.map { frame -> Double in
             let additive = normalizedMotionWeight * frame.motionScore + normalizedAudioWeight * frame.audioScore
             let multiplicative = sqrt(frame.motionScore * frame.audioScore)
-            return 0.4 * additive + 0.6 * multiplicative
+            return 0.7 * additive + 0.3 * multiplicative
         }
         let classificationThreshold = percentile(allScores, p: config.rallyPercentile)
         let dipScoreThreshold = classificationThreshold * 0.7
@@ -104,7 +105,7 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
             let scores = rallyFrames.map { frame -> Double in
                 let additive = normalizedMotionWeight * frame.motionScore + normalizedAudioWeight * frame.audioScore
                 let multiplicative = sqrt(frame.motionScore * frame.audioScore)
-                return 0.4 * additive + 0.6 * multiplicative
+                return 0.7 * additive + 0.3 * multiplicative
             }
 
             // Smooth with rolling average (window ~1s = 5 frames at 200ms)

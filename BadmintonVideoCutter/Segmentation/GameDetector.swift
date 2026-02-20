@@ -81,9 +81,9 @@ struct GameDetector {
 
         // Compute combined activity score for each frame (same blend as HybridSegmenter)
         let scores = gapFrames.map { frame -> (time: TimeInterval, score: Double) in
-            let additive = 0.5 * frame.motionScore + 0.5 * frame.audioScore
+            let additive = 0.65 * frame.motionScore + 0.35 * frame.audioScore
             let multiplicative = sqrt(frame.motionScore * frame.audioScore)
-            let combined = 0.4 * additive + 0.6 * multiplicative
+            let combined = 0.7 * additive + 0.3 * multiplicative
             return (time: frame.timestamp, score: combined)
         }
 

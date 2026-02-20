@@ -36,7 +36,7 @@ final class BasicFeatureExtractor: FeatureExtractor {
         return mergeAudioIntoVideo(videoFrames: video, audioFeatures: audio)
     }
 
-    // MARK: - Video Feature Extraction (Per-Pixel Frame Differencing)
+    // MARK: - Video Feature Extraction (Shuttlecock-Aware Motion Detection)
 
     private func extractVideoFeatures(from videoURL: URL, totalDuration: TimeInterval, progress: ProgressCallbacks?) async throws -> [FeatureFrame] {
         let asset = AVURLAsset(url: videoURL)
@@ -57,9 +57,8 @@ final class BasicFeatureExtractor: FeatureExtractor {
         // Process every ~200ms for meaningful motion between frames
         let frameSkip = max(1, Int(frameRate * 0.2))
 
-        let pixelCount = analysisWidth * analysisHeight
         var frames: [FeatureFrame] = []
-        var previousGray: [UInt8]?
+        var previousRGBA: [UInt8]?
         var frameIndex = 0
         var lastReportedProgress: Double = -1
         let progressReportInterval: Double = 0.02
@@ -73,19 +72,19 @@ final class BasicFeatureExtractor: FeatureExtractor {
             frameIndex += 1
             guard frameIndex % frameSkip == 0 else { continue }
 
-            // Render to grayscale at analysis resolution
-            guard let currentGray = renderToGrayscale(pixelBuffer) else {
+            // Render to RGBA at analysis resolution (need color channels for white detection)
+            guard let currentRGBA = renderToRGBA(pixelBuffer) else {
                 frames.append(FeatureFrame(timestamp: timestamp, motionScore: 0, audioScore: 0))
                 continue
             }
 
             let motion: Double
-            if let prev = previousGray {
-                motion = computeMotionScore(prev, currentGray, pixelCount: pixelCount)
+            if let prev = previousRGBA {
+                motion = computeMotionScore(prev, currentRGBA, timestamp: timestamp)
             } else {
                 motion = 0
             }
-            previousGray = currentGray
+            previousRGBA = currentRGBA
 
             frames.append(FeatureFrame(timestamp: timestamp, motionScore: motion, audioScore: 0.0))
 
@@ -104,19 +103,37 @@ final class BasicFeatureExtractor: FeatureExtractor {
         return frames
     }
 
-    // MARK: - Motion Detection (Per-Pixel Frame Differencing)
+    // MARK: - Motion Detection (Shuttlecock White-Motion + General Motion)
 
-    /// Compute motion score by comparing grayscale pixel values between frames.
-    /// Focuses on lower 80% of frame (where players are), applies noise threshold,
-    /// and uses a two-tier scoring: fraction of pixels that moved + average movement intensity.
-    private func computeMotionScore(_ prev: [UInt8], _ curr: [UInt8], pixelCount: Int) -> Double {
+    /// Raw diagnostic data from the last extraction run.
+    /// Only populated when `collectDiagnostics` is true.
+    struct MotionDiagnostics {
+        var timestamp: TimeInterval
+        var displacedWhiteCount: Int
+        var generalMotionScore: Double
+        var blendedScore: Double
+    }
+    var collectDiagnostics = false
+    private(set) var diagnostics: [MotionDiagnostics] = []
+
+    /// Compute blended motion score combining shuttlecock-specific white-pixel displacement
+    /// with general frame differencing.
+    ///
+    /// The shuttlecock is a small, bright white object that moves rapidly during rallies.
+    /// By tracking "displaced white pixels" (white at position (x,y) in one frame but not
+    /// the other), we get a direct signal for shuttlecock movement. Static white elements
+    /// like court lines contribute zero since they stay in the same position.
+    private func computeMotionScore(_ prevRGBA: [UInt8], _ currRGBA: [UInt8], timestamp: TimeInterval = 0) -> Double {
         let width = analysisWidth
         let height = analysisHeight
 
         // Skip top 20% (ceiling/lights in indoor courts)
         let startRow = height / 5
-        let noiseThreshold: Int = 12  // Ignore differences below this (sensor noise, compression)
+        let noiseThreshold: Int = 12
+        let luminanceThreshold: Int = 200  // Bright pixels (shuttlecock is very bright)
+        let saturationThreshold: Int = 50  // Low saturation = white/gray, not colored
 
+        var displacedWhiteCount = 0
         var movingPixels = 0
         var totalDiff: Int = 0
         var regionPixels = 0
@@ -125,39 +142,85 @@ final class BasicFeatureExtractor: FeatureExtractor {
             let rowOffset = y * width
             for x in 0..<width {
                 let idx = rowOffset + x
-                let diff = abs(Int(curr[idx]) - Int(prev[idx]))
+                let rgbaIdx = idx * 4
+
+                // Current pixel RGB
+                let cR = Int(currRGBA[rgbaIdx])
+                let cG = Int(currRGBA[rgbaIdx + 1])
+                let cB = Int(currRGBA[rgbaIdx + 2])
+
+                // Previous pixel RGB
+                let pR = Int(prevRGBA[rgbaIdx])
+                let pG = Int(prevRGBA[rgbaIdx + 1])
+                let pB = Int(prevRGBA[rgbaIdx + 2])
+
+                // Luminance (ITU-R BT.601)
+                let currLum = (cR * 77 + cG * 150 + cB * 29) >> 8
+                let prevLum = (pR * 77 + pG * 150 + pB * 29) >> 8
+
+                // White detection: high luminance + low saturation
+                let currMaxCh = max(cR, max(cG, cB))
+                let currMinCh = min(cR, min(cG, cB))
+                let currIsWhite = currLum > luminanceThreshold && (currMaxCh - currMinCh) < saturationThreshold
+
+                let prevMaxCh = max(pR, max(pG, pB))
+                let prevMinCh = min(pR, min(pG, pB))
+                let prevIsWhite = prevLum > luminanceThreshold && (prevMaxCh - prevMinCh) < saturationThreshold
+
+                // Displaced white: white in one frame but not the other at same position
+                // This captures shuttlecock arriving at or departing from this pixel
+                if currIsWhite != prevIsWhite {
+                    displacedWhiteCount += 1
+                }
+
+                // General motion (luminance-based frame differencing)
                 regionPixels += 1
-                if diff > noiseThreshold {
+                let lumDiff = abs(currLum - prevLum)
+                if lumDiff > noiseThreshold {
                     movingPixels += 1
-                    totalDiff += diff
+                    totalDiff += lumDiff
                 }
             }
         }
 
-        guard regionPixels > 0, movingPixels > 0 else { return 0 }
+        // White-motion score: displaced white pixels correlate with activity level.
+        // Median count is ~18, p90 is ~41 at 320x180. Use sqrt to compress outliers
+        // while preserving sensitivity at lower counts.
+        let shuttlecockScore = min(sqrt(Double(displacedWhiteCount)) / 7.0, 1.0)
 
-        // Fraction of pixels with significant motion
-        let motionFraction = Double(movingPixels) / Double(regionPixels)
+        // General motion score (same approach as before)
+        let generalMotionScore: Double
+        if regionPixels > 0, movingPixels > 0 {
+            let motionFraction = Double(movingPixels) / Double(regionPixels)
+            let avgIntensity = Double(totalDiff) / Double(movingPixels) / 255.0
+            let raw = motionFraction * 0.6 + avgIntensity * 0.4
+            generalMotionScore = min(raw * 4.0, 1.0)
+        } else {
+            generalMotionScore = 0
+        }
 
-        // Average intensity of the moving pixels (normalized to 0-1, max diff = 255)
-        let avgIntensity = Double(totalDiff) / Double(movingPixels) / 255.0
+        // Multiplicative boost: white-motion amplifies general motion rather than raising the floor.
+        // This preserves the dynamic range for low-activity periods (breaks, between-points)
+        // while giving a modest boost to high-activity frames with shuttlecock/player movement.
+        let blended = min(generalMotionScore * (1.0 + 0.3 * shuttlecockScore), 1.0)
 
-        // Combined score: weighted blend of coverage and intensity
-        // During rallies: ~5-20% of pixels move with moderate intensity
-        // Between points: <2% move (people standing still)
-        let score = motionFraction * 0.6 + avgIntensity * 0.4
+        if collectDiagnostics {
+            diagnostics.append(MotionDiagnostics(
+                timestamp: timestamp,
+                displacedWhiteCount: displacedWhiteCount,
+                generalMotionScore: generalMotionScore,
+                blendedScore: blended
+            ))
+        }
 
-        // Scale so typical rally motion (~10% moving pixels, ~0.15 avg intensity)
-        // maps to ~0.4-0.6 range
-        return min(score * 4.0, 1.0)
+        return blended
     }
 
     // MARK: - Frame Rendering
 
-    /// Render a pixel buffer to a grayscale byte array at analysis resolution.
+    /// Render a pixel buffer to an RGBA byte array at analysis resolution.
     /// Uses CIImage pipeline for fast, GPU-accelerated scaling.
-    private func renderToGrayscale(_ source: CVPixelBuffer) -> [UInt8]? {
-        // Scale to analysis resolution
+    private func renderToRGBA(_ source: CVPixelBuffer) -> [UInt8]? {
         let ciImage = CIImage(cvPixelBuffer: source)
         let scaleX = CGFloat(analysisWidth) / ciImage.extent.width
         let scaleY = CGFloat(analysisHeight) / ciImage.extent.height
@@ -167,7 +230,6 @@ final class BasicFeatureExtractor: FeatureExtractor {
             return nil
         }
 
-        // Render to RGBA then convert to grayscale
         let width = analysisWidth
         let height = analysisHeight
         var rgba = [UInt8](repeating: 0, count: width * height * 4)
@@ -184,17 +246,7 @@ final class BasicFeatureExtractor: FeatureExtractor {
 
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        // Convert to grayscale using luminance weights
-        var gray = [UInt8](repeating: 0, count: width * height)
-        for i in 0..<(width * height) {
-            let r = Int(rgba[i * 4])
-            let g = Int(rgba[i * 4 + 1])
-            let b = Int(rgba[i * 4 + 2])
-            // ITU-R BT.601 luminance
-            gray[i] = UInt8((r * 77 + g * 150 + b * 29) >> 8)
-        }
-
-        return gray
+        return rgba
     }
 
     // MARK: - Audio Merging
