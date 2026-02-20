@@ -129,6 +129,66 @@ final class BasicFeatureExtractor: FeatureExtractor {
             }
         }
 
+        // Post-process: adjust motion scores based on temporal variance.
+        // Rally motion oscillates (burst-pause-burst) → high variance.
+        // Break motion is steady (walking pace) → low variance.
+        frames = applyMotionTempo(frames: &frames)
+
+        return frames
+    }
+
+    // MARK: - Motion Tempo
+
+    /// Adjusts motion scores based on temporal variance in a sliding window.
+    /// Rally exchanges produce rapid oscillations (hit → pause → return → pause)
+    /// while breaks have steady motion (walking). High variance boosts the score,
+    /// low variance suppresses it.
+    private func applyMotionTempo(frames: inout [FeatureFrame]) -> [FeatureFrame] {
+        guard frames.count > 2 else { return frames }
+
+        let windowSize = 15 // ~3 seconds at 200ms/frame
+        let halfW = windowSize / 2
+        let rawScores = frames.map(\.motionScore)
+
+        // Compute stddev in sliding window for each frame
+        var tempoRaw = [Double](repeating: 0, count: frames.count)
+        for i in 0..<frames.count {
+            let lo = max(0, i - halfW)
+            let hi = min(frames.count - 1, i + halfW)
+            let window = Array(rawScores[lo...hi])
+            let mean = window.reduce(0, +) / Double(window.count)
+            let variance = window.reduce(0.0) { $0 + ($1 - mean) * ($1 - mean) } / Double(window.count)
+            tempoRaw[i] = sqrt(variance)
+        }
+
+        // Normalize using 95th percentile (robust to outliers)
+        let sorted = tempoRaw.sorted()
+        let p95Index = min(sorted.count - 1, Int(Double(sorted.count) * 0.95))
+        let normValue = sorted[p95Index]
+        var tempoScores: [Double]
+        if normValue > 0 {
+            tempoScores = tempoRaw.map { min($0 / normValue, 1.0) }
+        } else {
+            tempoScores = tempoRaw
+        }
+
+        // Apply tempo as a multiplier on existing motion scores:
+        //   adjusted = raw * (0.6 + 0.4 * tempoScore)
+        //   High tempo (1.0): multiplier = 1.0 → unchanged
+        //   Low tempo (0.0): multiplier = 0.6 → 40% reduction
+        //   This suppresses steady break motion while preserving burst-like rally motion.
+        for i in 0..<frames.count {
+            frames[i].motionScore = min(frames[i].motionScore * (0.6 + 0.4 * tempoScores[i]), 1.0)
+        }
+
+        // Update diagnostics with tempo scores
+        if collectDiagnostics && diagnostics.count == frames.count {
+            for i in 0..<diagnostics.count {
+                diagnostics[i].motionTempoScore = tempoScores[i]
+                diagnostics[i].blendedScore = frames[i].motionScore
+            }
+        }
+
         return frames
     }
 
@@ -144,6 +204,7 @@ final class BasicFeatureExtractor: FeatureExtractor {
         var spreadScore: Double
         var personCount: Int
         var playerPresenceScore: Double
+        var motionTempoScore: Double = 0
         var blendedScore: Double
     }
     var collectDiagnostics = false

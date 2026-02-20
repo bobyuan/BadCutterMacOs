@@ -253,12 +253,22 @@ final class BasicFeatureExtractorTests: XCTestCase {
         print("  Median: \(sortedPersons[sortedPersons.count / 2])")
         print("  Distribution: 0=\(p0) 1=\(p1) 2=\(p2) 3=\(p3) 4+=\(p4plus)")
 
+        // Motion tempo distribution
+        let tempoScores = diag.map(\.motionTempoScore)
+        let sortedTempo = tempoScores.sorted()
+        let avgTempo = tempoScores.reduce(0, +) / Double(tempoScores.count)
+        print("\nMotion tempo (stddev-based):")
+        print("  Avg: \(String(format: "%.4f", avgTempo))")
+        print("  Median: \(String(format: "%.4f", sortedTempo[sortedTempo.count / 2]))")
+        print("  p75: \(String(format: "%.4f", sortedTempo[sortedTempo.count * 3 / 4]))")
+        print("  p90: \(String(format: "%.4f", sortedTempo[sortedTempo.count * 9 / 10]))")
+
         // Sample frames
         print("\nSample frames (every ~60s):")
         let step = max(1, diag.count / 16)
         for i in stride(from: 0, to: diag.count, by: step) {
             let d = diag[i]
-            print("  t=\(String(format: "%6.1f", d.timestamp))s  regions=\(String(format: "%2d", d.activeRegions))  spread=\(String(format: "%.3f", d.spreadScore))  shuttle=\(String(format: "%.3f", d.shuttlecockScore))  persons=\(d.personCount)  general=\(String(format: "%.3f", d.generalMotionScore))  blended=\(String(format: "%.3f", d.blendedScore))")
+            print("  t=\(String(format: "%6.1f", d.timestamp))s  regions=\(String(format: "%2d", d.activeRegions))  spread=\(String(format: "%.3f", d.spreadScore))  shuttle=\(String(format: "%.3f", d.shuttlecockScore))  persons=\(d.personCount)  tempo=\(String(format: "%.3f", d.motionTempoScore))  general=\(String(format: "%.3f", d.generalMotionScore))  blended=\(String(format: "%.3f", d.blendedScore))")
         }
     }
 }
