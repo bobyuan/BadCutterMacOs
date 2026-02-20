@@ -13,13 +13,22 @@ struct TimelineTabView: View {
         HSplitView {
             // Left panel: player + timeline + minimap
             VStack(spacing: 12) {
-                // Video player
+                // Video player with trim overlay
                 if let player = appState.player {
-                    NativePlayerView(player: player)
-                        .frame(minHeight: 280)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .onAppear { setupTimeObserver(player) }
-                        .onDisappear { removeTimeObserver(player) }
+                    ZStack {
+                        NativePlayerView(player: player)
+                            .frame(minHeight: 280)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                        // Red overlay when playhead is in a trim (removed) segment
+                        if isInTrimZone {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.red.opacity(0.25))
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .onAppear { setupTimeObserver(player) }
+                    .onDisappear { removeTimeObserver(player) }
                 } else {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(.gray.opacity(0.15))
@@ -35,6 +44,7 @@ struct TimelineTabView: View {
                         playheadTime: playheadTime
                     )
                     .frame(height: 80)
+                    .background(ScrollWheelHandler { deltaX in scrollViewport(deltaX: deltaX) })
                 }
 
                 // Interactive trim timeline
@@ -46,6 +56,7 @@ struct TimelineTabView: View {
                         selectedPointID: $selectedPointID
                     )
                     .frame(height: 60)
+                    .background(ScrollWheelHandler { deltaX in scrollViewport(deltaX: deltaX) })
                 }
 
                 // Minimap
@@ -96,6 +107,26 @@ struct TimelineTabView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Trim Zone Detection
+
+    /// True when playhead is inside a trim segment that will be removed.
+    private var isInTrimZone: Bool {
+        appState.trimSegments.contains { trim in
+            trim.reviewStatus != .flagged && playheadTime >= trim.start && playheadTime <= trim.end
+        }
+    }
+
+    private func scrollViewport(deltaX: CGFloat) {
+        let totalDuration = appState.videoMetadata?.duration ?? 1
+        guard totalDuration > 0 else { return }
+        // Convert pixel scroll delta to time shift (scale by visible duration)
+        let timeShift = -Double(deltaX) / 500.0 * viewport.visibleDuration
+        let newStart = max(0, min(totalDuration - viewport.visibleDuration, viewport.visibleStart + timeShift))
+        let newEnd = newStart + viewport.visibleDuration
+        viewport.visibleStart = newStart
+        viewport.visibleEnd = min(totalDuration, newEnd)
     }
 
     // MARK: - Time Observer
@@ -390,6 +421,36 @@ extension View {
                 cursor.push()
             } else {
                 NSCursor.pop()
+            }
+        }
+    }
+}
+
+// MARK: - Minimap
+
+// MARK: - Scroll Wheel Handler (macOS trackpad / mouse wheel)
+
+struct ScrollWheelHandler: NSViewRepresentable {
+    let onScroll: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> ScrollWheelNSView {
+        let view = ScrollWheelNSView()
+        view.onScroll = onScroll
+        return view
+    }
+
+    func updateNSView(_ nsView: ScrollWheelNSView, context: Context) {
+        nsView.onScroll = onScroll
+    }
+
+    class ScrollWheelNSView: NSView {
+        var onScroll: ((CGFloat) -> Void)?
+
+        override func scrollWheel(with event: NSEvent) {
+            // Use horizontal scroll delta (trackpad two-finger swipe or shift+scroll wheel)
+            let dx = event.scrollingDeltaX
+            if abs(dx) > 0.1 {
+                onScroll?(dx)
             }
         }
     }
