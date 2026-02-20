@@ -13,13 +13,15 @@ final class AudioAnalyzer: Sendable {
         var lowFreqBin: Int = 2    // ~1 kHz at 44.1kHz / 2048
         var highFreqBin: Int = 186 // ~8 kHz at 44.1kHz / 2048
         // Minimum flux magnitude to count as an onset (filters footsteps/talking).
-        var onsetIntensityFloor: Double = 0.18
+        // Lowered from 0.18 to detect soft net shots and light returns.
+        var onsetIntensityFloor: Double = 0.08
         // Minimum time between onsets in seconds (debounce). Two hits can't be faster than this.
         var minOnsetGap: TimeInterval = 0.3
         // Max time between consecutive hits to count as same rally sequence
         var maxHitGap: TimeInterval = 3.5
-        // Minimum hits in a cluster to count as a rally sequence
-        var minClusterSize: Int = 3
+        // Minimum hits in a cluster to count as a rally sequence.
+        // Reduced from 3 to catch short rallies (serve + net return).
+        var minClusterSize: Int = 2
     }
 
     private let config: Config
@@ -211,9 +213,18 @@ final class AudioAnalyzer: Sendable {
             offset += hopSize
         }
 
-        // Normalize flux values
-        if let maxFlux = fluxValues.max(), maxFlux > 0 {
-            fluxValues = fluxValues.map { $0 / maxFlux }
+        // Normalize flux values using 95th percentile instead of max.
+        // Global max normalization lets one loud smash suppress all soft hits —
+        // a soft net shot at raw flux 5.0 vs a smash at 100.0 would become 0.05,
+        // invisible to the intensity floor. Percentile-based normalization
+        // preserves the relative loudness of soft hits.
+        if !fluxValues.isEmpty {
+            let sorted = fluxValues.sorted()
+            let p95Index = min(sorted.count - 1, Int(Double(sorted.count) * 0.95))
+            let normValue = sorted[p95Index]
+            if normValue > 0 {
+                fluxValues = fluxValues.map { min($0 / normValue, 1.0) }
+            }
         }
 
         return fluxValues
