@@ -1,10 +1,16 @@
 import Foundation
 import AVFoundation
 import CoreImage
+import Vision
 
 final class BasicFeatureExtractor: FeatureExtractor {
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private let audioAnalyzer = AudioAnalyzer()
+
+    // Person detection state (cached — Vision is expensive, run every Nth frame)
+    private var lastPersonCount: Int = 0
+    private var personDetectionCounter: Int = 0
+    private let personDetectionInterval: Int = 10 // Every 10th analyzed frame (~2s)
 
     struct ProgressCallbacks {
         var onAudioProgress: @MainActor (Double) -> Void
@@ -78,6 +84,8 @@ final class BasicFeatureExtractor: FeatureExtractor {
         let progressReportInterval: Double = 0.02
 
         diagnostics = []
+        lastPersonCount = 0
+        personDetectionCounter = 0
 
         reader.startReading()
         while reader.status == .reading {
@@ -88,6 +96,12 @@ final class BasicFeatureExtractor: FeatureExtractor {
             frameIndex += 1
             guard frameIndex % frameSkip == 0 else { continue }
 
+            // Run Vision person detection periodically (every ~2s)
+            personDetectionCounter += 1
+            if personDetectionCounter % personDetectionInterval == 0 {
+                lastPersonCount = detectPersonCount(in: pixelBuffer)
+            }
+
             guard let currentRGBA = renderToRGBA(pixelBuffer, width: analysisWidth, height: analysisHeight) else {
                 frames.append(FeatureFrame(timestamp: timestamp, motionScore: 0, audioScore: 0))
                 continue
@@ -95,7 +109,7 @@ final class BasicFeatureExtractor: FeatureExtractor {
 
             let motion: Double
             if let prev = previousRGBA {
-                motion = computeMotionScore(prev, currentRGBA, width: analysisWidth, height: analysisHeight, timestamp: timestamp)
+                motion = computeMotionScore(prev, currentRGBA, width: analysisWidth, height: analysisHeight, timestamp: timestamp, personCount: lastPersonCount)
             } else {
                 motion = 0
             }
@@ -128,6 +142,8 @@ final class BasicFeatureExtractor: FeatureExtractor {
         var generalMotionScore: Double
         var activeRegions: Int
         var spreadScore: Double
+        var personCount: Int
+        var playerPresenceScore: Double
         var blendedScore: Double
     }
     var collectDiagnostics = false
@@ -140,7 +156,7 @@ final class BasicFeatureExtractor: FeatureExtractor {
     /// ~20-30px diameter — large enough to form a distinct blob of displaced white pixels.
     /// A grid-based spatial filter finds the densest concentration of displaced white pixels,
     /// distinguishing the compact shuttlecock from scattered noise (player clothing, etc.).
-    private func computeMotionScore(_ prevRGBA: [UInt8], _ currRGBA: [UInt8], width: Int, height: Int, timestamp: TimeInterval = 0) -> Double {
+    private func computeMotionScore(_ prevRGBA: [UInt8], _ currRGBA: [UInt8], width: Int, height: Int, timestamp: TimeInterval = 0, personCount: Int = 0) -> Double {
         // Skip top 20% (ceiling/lights in indoor courts)
         let startRow = height / 5
         let noiseThreshold: Int = 12
@@ -280,14 +296,29 @@ final class BasicFeatureExtractor: FeatureExtractor {
         // Normalize: 8+ active regions = full score (typical rally with 4 players)
         let spreadScore = min(Double(activeRegions) / 8.0, 1.0)
 
-        // Three-signal blend:
-        //   generalMotion * (base + shuttlecockBoost + spreadBoost)
-        //   base=0.3: floor when no shuttlecock or spread detected
-        //   Each signal contributes up to 0.35 boost
-        //   Full rally (both=1.0): multiplier = 1.0
-        //   Full break (both=0.0): multiplier = 0.3
-        //   This creates ~3x gap between rally and break scores.
-        let blended = min(generalMotionScore * (0.3 + 0.35 * shuttlecockScore + 0.35 * spreadScore), 1.0)
+        // Player presence score from Vision person detection.
+        // At typical badminton camera distance, Vision detects 0-3 people
+        // (players are small, partially overlapping). Calibrated to actual distribution:
+        //   0 detected → likely break/static (31% of frames in test video)
+        //   1 detected → ambiguous, slight boost (49%)
+        //   2+ detected → strong rally signal, multiple players active (21%)
+        let playerPresenceScore: Double
+        switch personCount {
+        case 3...: playerPresenceScore = 1.0
+        case 2:    playerPresenceScore = 0.85
+        case 1:    playerPresenceScore = 0.3
+        default:   playerPresenceScore = 0.0
+        }
+
+        // Four-signal blend:
+        //   generalMotion * (base + shuttlecockBoost + spreadBoost + playerBoost)
+        //   base=0.2: floor when no signals detected
+        //   Full rally (all=1.0): multiplier = 1.0
+        //   Full break (all=0.0): multiplier = 0.2
+        //   This creates ~5x gap between rally and break scores.
+        //   Player presence has the largest weight (0.3) because it's
+        //   the most reliable signal — players on court = game in progress.
+        let blended = min(generalMotionScore * (0.2 + 0.2 * shuttlecockScore + 0.25 * spreadScore + 0.35 * playerPresenceScore), 1.0)
 
         if collectDiagnostics {
             diagnostics.append(MotionDiagnostics(
@@ -298,11 +329,39 @@ final class BasicFeatureExtractor: FeatureExtractor {
                 generalMotionScore: generalMotionScore,
                 activeRegions: activeRegions,
                 spreadScore: spreadScore,
+                personCount: personCount,
+                playerPresenceScore: playerPresenceScore,
                 blendedScore: blended
             ))
         }
 
         return blended
+    }
+
+    // MARK: - Vision Person Detection
+
+    /// Detect number of people visible on the court using Vision framework.
+    /// Filters out detections in the top 20% of the frame (ceiling/lights area).
+    /// Returns the count of people detected in the court region.
+    private func detectPersonCount(in pixelBuffer: CVPixelBuffer) -> Int {
+        let request = VNDetectHumanRectanglesRequest()
+        request.upperBodyOnly = false
+
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+        do {
+            try handler.perform([request])
+            guard let results = request.results else { return 0 }
+
+            // Filter: exclude detections in top 20% of frame (ceiling/lights).
+            // Vision coordinates: origin at bottom-left, y goes up.
+            // Top 20% of visual image = y > 0.8 in Vision coords.
+            let courtDetections = results.filter { observation in
+                observation.boundingBox.midY < 0.8
+            }
+            return courtDetections.count
+        } catch {
+            return 0
+        }
     }
 
     // MARK: - Frame Rendering

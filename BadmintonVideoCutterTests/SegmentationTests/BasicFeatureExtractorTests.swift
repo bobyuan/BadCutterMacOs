@@ -103,14 +103,15 @@ final class BasicFeatureExtractorTests: XCTestCase {
 
         // Get diagnostic info for each pick
         print("\n=== VISUAL VERIFICATION FRAME LIST ===")
-        print("Format: timestamp | motion | audio | shuttle | spread(regions) | general | label | bucket")
-        print(String(repeating: "-", count: 110))
+        print("Format: timestamp | motion | audio | shuttle | spread(regions) | persons | general | label | bucket")
+        print(String(repeating: "-", count: 130))
         for (frame, bucket) in picks {
             let diagInfo = diag.first(where: { abs($0.timestamp - frame.timestamp) < 0.05 })
             let shuttle = diagInfo?.shuttlecockScore ?? -1
             let spread = diagInfo?.spreadScore ?? -1
             let regions = diagInfo?.activeRegions ?? -1
             let general = diagInfo?.generalMotionScore ?? -1
+            let persons = diagInfo?.personCount ?? -1
             let label = labelAt(frame.timestamp)
             let ts = String(format: "%7.2f", frame.timestamp)
             let mot = String(format: "%.3f", frame.motionScore)
@@ -118,7 +119,7 @@ final class BasicFeatureExtractorTests: XCTestCase {
             let sht = String(format: "%.3f", shuttle)
             let spr = String(format: "%.3f", spread)
             let gen = String(format: "%.3f", general)
-            print("t=\(ts)s | mot=\(mot) | aud=\(aud) | shuttle=\(sht) | spread=\(spr)(\(regions)) | gen=\(gen) | \(label) | \(bucket)")
+            print("t=\(ts)s | mot=\(mot) | aud=\(aud) | shuttle=\(sht) | spread=\(spr)(\(regions)) | persons=\(persons) | gen=\(gen) | \(label) | \(bucket)")
         }
 
         // Also print segment summary
@@ -238,12 +239,26 @@ final class BasicFeatureExtractorTests: XCTestCase {
         let maxGeneral = gScores.max() ?? 0
         print("\nGeneral motion score: avg=\(String(format: "%.4f", avgGeneral)) max=\(String(format: "%.4f", maxGeneral))")
 
+        // Person detection distribution
+        let personCounts = diag.map(\.personCount)
+        let sortedPersons = personCounts.sorted()
+        let avgPersons = Double(personCounts.reduce(0, +)) / Double(personCounts.count)
+        let p0 = personCounts.filter { $0 == 0 }.count
+        let p1 = personCounts.filter { $0 == 1 }.count
+        let p2 = personCounts.filter { $0 == 2 }.count
+        let p3 = personCounts.filter { $0 == 3 }.count
+        let p4plus = personCounts.filter { $0 >= 4 }.count
+        print("\nVision person detection:")
+        print("  Avg: \(String(format: "%.1f", avgPersons))")
+        print("  Median: \(sortedPersons[sortedPersons.count / 2])")
+        print("  Distribution: 0=\(p0) 1=\(p1) 2=\(p2) 3=\(p3) 4+=\(p4plus)")
+
         // Sample frames
         print("\nSample frames (every ~60s):")
         let step = max(1, diag.count / 16)
         for i in stride(from: 0, to: diag.count, by: step) {
             let d = diag[i]
-            print("  t=\(String(format: "%6.1f", d.timestamp))s  regions=\(String(format: "%2d", d.activeRegions))  spread=\(String(format: "%.3f", d.spreadScore))  shuttle=\(String(format: "%.3f", d.shuttlecockScore))  general=\(String(format: "%.3f", d.generalMotionScore))  blended=\(String(format: "%.3f", d.blendedScore))")
+            print("  t=\(String(format: "%6.1f", d.timestamp))s  regions=\(String(format: "%2d", d.activeRegions))  spread=\(String(format: "%.3f", d.spreadScore))  shuttle=\(String(format: "%.3f", d.shuttlecockScore))  persons=\(d.personCount)  general=\(String(format: "%.3f", d.generalMotionScore))  blended=\(String(format: "%.3f", d.blendedScore))")
         }
     }
 }
