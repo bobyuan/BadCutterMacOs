@@ -1,0 +1,18 @@
+# Sample frames (large image files for visual verification)
+sample_frames/*.jpg
+sample_frames/*.png
+
+# macOS
+.DS_Store
+
+# Xcode user data
+*.xcuserdata
+xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Claude Code
+.claude/
+
+# Project notes
+progress.md
+claude_code_prompt_pack.md
