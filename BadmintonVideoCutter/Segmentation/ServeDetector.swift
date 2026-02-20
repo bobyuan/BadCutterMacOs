@@ -19,11 +19,13 @@ final class ServeDetector {
         }
     }
 
-    /// Detect which side of the court serves each point by analyzing
-    /// left vs right motion asymmetry at the start of each rally.
-    /// The serving player initiates the first significant motion.
+    /// Detect which side of the court serves each point by computing the
+    /// motion centroid at each rally start, then clustering into two groups.
+    /// Adapts to any camera angle — uses whichever spatial axis (X or Y)
+    /// best separates the two players.
     static func detectServes(videoURL: URL, points: [GamePoint]) async -> [UUID: ServeSide] {
         let pointData = points.map { (id: $0.id, start: $0.start) }
+        guard !pointData.isEmpty else { return [:] }
 
         return await Task.detached {
             let asset = AVURLAsset(url: videoURL)
@@ -33,36 +35,60 @@ final class ServeDetector {
             generator.requestedTimeToleranceBefore = CMTime(seconds: 0.05, preferredTimescale: 600)
             generator.requestedTimeToleranceAfter = CMTime(seconds: 0.05, preferredTimescale: 600)
 
-            var results: [UUID: ServeSide] = [:]
+            // Step 1: Compute motion centroid for each rally start
+            var centroids: [(id: UUID, cx: Double, cy: Double)] = []
 
             for point in pointData {
-                // Grab two frames: just after rally start and 0.5s later
-                // The serve motion happens in this window
                 let t0 = CMTime(seconds: point.start + 0.1, preferredTimescale: 600)
-                let t1 = CMTime(seconds: point.start + 0.6, preferredTimescale: 600)
+                let t1 = CMTime(seconds: point.start + 0.5, preferredTimescale: 600)
+                let t2 = CMTime(seconds: point.start + 0.9, preferredTimescale: 600)
 
                 guard let img0 = try? generator.copyCGImage(at: t0, actualTime: nil),
                       let img1 = try? generator.copyCGImage(at: t1, actualTime: nil) else {
-                    results[point.id] = .unknown
+                    centroids.append((id: point.id, cx: 0.5, cy: 0.5))
                     continue
                 }
 
-                let (leftMotion, rightMotion) = computeHalfMotion(img0, img1)
+                let (cx1, cy1) = computeMotionCentroid(img0, img1)
 
-                let total = leftMotion + rightMotion
-                guard total > 100 else {
-                    // Not enough motion detected
-                    results[point.id] = .unknown
-                    continue
-                }
-
-                let leftRatio = leftMotion / total
-                if leftRatio > 0.58 {
-                    results[point.id] = .left
-                } else if leftRatio < 0.42 {
-                    results[point.id] = .right
+                // Average with a second frame pair for robustness
+                if let img2 = try? generator.copyCGImage(at: t2, actualTime: nil) {
+                    let (cx2, cy2) = computeMotionCentroid(img0, img2)
+                    centroids.append((id: point.id, cx: (cx1 + cx2) / 2, cy: (cy1 + cy2) / 2))
                 } else {
-                    results[point.id] = .unknown
+                    centroids.append((id: point.id, cx: cx1, cy: cy1))
+                }
+            }
+
+            guard centroids.count >= 2 else {
+                return Dictionary(uniqueKeysWithValues: centroids.map { ($0.id, ServeSide.unknown) })
+            }
+
+            // Step 2: Determine which axis best separates the two players
+            let xValues = centroids.map(\.cx)
+            let yValues = centroids.map(\.cy)
+            let xVariance = variance(xValues)
+            let yVariance = variance(yValues)
+
+            // Use the axis with more spread
+            let values = xVariance >= yVariance ? xValues : yValues
+            let sortedValues = values.sorted()
+            let median = sortedValues[sortedValues.count / 2]
+
+            // Step 3: Assign sides based on median split.
+            // Points with centroid below median → left, above → right.
+            // A small dead zone around the median handles ambiguous cases.
+            let deadZone = 0.02  // 2% of frame dimension
+            var results: [UUID: ServeSide] = [:]
+
+            for (i, entry) in centroids.enumerated() {
+                let val = values[i]
+                if val < median - deadZone {
+                    results[entry.id] = .left
+                } else if val > median + deadZone {
+                    results[entry.id] = .right
+                } else {
+                    results[entry.id] = .unknown
                 }
             }
 
@@ -72,36 +98,40 @@ final class ServeDetector {
 
     // MARK: - Motion Analysis
 
-    /// Compare two frames and return total motion in left vs right halves.
-    private static func computeHalfMotion(_ img1: CGImage, _ img2: CGImage) -> (left: Double, right: Double) {
+    /// Compute the center of mass of motion between two frames.
+    /// Returns (cx, cy) normalized to [0, 1] where (0,0) = top-left.
+    private static func computeMotionCentroid(_ img1: CGImage, _ img2: CGImage) -> (cx: Double, cy: Double) {
         let width = 160
         let height = 90
 
         guard let data1 = renderToPixels(img1, width: width, height: height),
               let data2 = renderToPixels(img2, width: width, height: height) else {
-            return (0, 0)
+            return (0.5, 0.5)
         }
 
-        let halfWidth = width / 2
-        var leftSum: Double = 0
-        var rightSum: Double = 0
+        var weightedX: Double = 0
+        var weightedY: Double = 0
+        var totalWeight: Double = 0
 
         for y in 0..<height {
             for x in 0..<width {
                 let idx = (y * width + x) * 4
-                let diff = abs(Int(data1[idx]) - Int(data2[idx])) +
-                           abs(Int(data1[idx + 1]) - Int(data2[idx + 1])) +
-                           abs(Int(data1[idx + 2]) - Int(data2[idx + 2]))
-
-                if x < halfWidth {
-                    leftSum += Double(diff)
-                } else {
-                    rightSum += Double(diff)
-                }
+                let diff = Double(
+                    abs(Int(data1[idx]) - Int(data2[idx])) +
+                    abs(Int(data1[idx + 1]) - Int(data2[idx + 1])) +
+                    abs(Int(data1[idx + 2]) - Int(data2[idx + 2]))
+                )
+                weightedX += Double(x) * diff
+                weightedY += Double(y) * diff
+                totalWeight += diff
             }
         }
 
-        return (leftSum, rightSum)
+        guard totalWeight > 0 else { return (0.5, 0.5) }
+        return (
+            cx: weightedX / (totalWeight * Double(width)),
+            cy: weightedY / (totalWeight * Double(height))
+        )
     }
 
     /// Render a CGImage to a fixed-size RGBA pixel buffer.
@@ -121,6 +151,12 @@ final class ServeDetector {
         return pixelData
     }
 
+    private static func variance(_ values: [Double]) -> Double {
+        guard values.count > 1 else { return 0 }
+        let mean = values.reduce(0, +) / Double(values.count)
+        return values.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(values.count)
+    }
+
     // MARK: - Score Computation
 
     /// Compute running scores for points within a single game.
@@ -128,6 +164,7 @@ final class ServeDetector {
     /// Rule: winner of point N serves point N+1.
     /// So if same side serves consecutive points → server won.
     /// If side changes → receiver won.
+    /// Scores shown are cumulative AFTER each point is played.
     static func computeScores(
         points: [GamePoint],
         serveSides: [UUID: ServeSide],
@@ -136,9 +173,13 @@ final class ServeDetector {
         let activePoints = points.filter { $0.reviewStatus != .deleted }
         guard !activePoints.isEmpty else { return [:] }
 
-        // Determine player A = the side that serves first in this game
-        let firstServe = serveSides[activePoints[0].id] ?? .unknown
-        guard firstServe != .unknown else { return [:] }
+        // Determine player A = the side that serves first in this game.
+        let firstServe: ServeSide
+        if let known = activePoints.first(where: { serveSides[$0.id] != nil && serveSides[$0.id] != .unknown }) {
+            firstServe = serveSides[known.id]!
+        } else {
+            return [:]
+        }
 
         var scoreA = 0
         var scoreB = 0
@@ -150,13 +191,19 @@ final class ServeDetector {
             // Determine who won this point by checking who serves next
             let nextServe: ServeSide
             if i < activePoints.count - 1 {
+                // Find next point with a known serve
                 nextServe = serveSides[activePoints[i + 1].id] ?? .unknown
             } else if let ngs = nextGameFirstServe {
-                // Last point of game: use first serve of next game
-                // (winner of game serves first in next game)
                 nextServe = ngs
             } else {
-                // Last point of match — show score without resolving
+                // Last point of match — infer winner: whoever is behind likely lost,
+                // so the leading player won. If tied, server wins.
+                if scoreA != scoreB {
+                    if scoreA > scoreB { scoreA += 1 } else { scoreB += 1 }
+                } else {
+                    let serverIsA = (currentServe == firstServe)
+                    if serverIsA { scoreA += 1 } else { scoreB += 1 }
+                }
                 results[activePoints[i].id] = PointScore(scoreA: scoreA, scoreB: scoreB)
                 continue
             }
@@ -170,6 +217,10 @@ final class ServeDetector {
                     // Receiver won this point
                     if serverIsA { scoreB += 1 } else { scoreA += 1 }
                 }
+            } else {
+                // Can't determine winner — assume the leading player won,
+                // or if tied, increment A (arbitrary but keeps score moving)
+                if scoreA >= scoreB { scoreA += 1 } else { scoreB += 1 }
             }
 
             results[activePoints[i].id] = PointScore(scoreA: scoreA, scoreB: scoreB)

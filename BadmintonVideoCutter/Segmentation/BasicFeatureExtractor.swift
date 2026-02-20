@@ -6,6 +6,10 @@ final class BasicFeatureExtractor: FeatureExtractor {
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private let audioAnalyzer = AudioAnalyzer()
 
+    /// Resolution for motion analysis. 320x180 gives good accuracy at reasonable cost.
+    private let analysisWidth = 320
+    private let analysisHeight = 180
+
     struct ProgressCallbacks {
         var onAudioProgress: @MainActor (Double) -> Void
         var onVideoProgress: @MainActor (Double) -> Void
@@ -32,13 +36,15 @@ final class BasicFeatureExtractor: FeatureExtractor {
         return mergeAudioIntoVideo(videoFrames: video, audioFeatures: audio)
     }
 
-    // MARK: - Video Feature Extraction
+    // MARK: - Video Feature Extraction (Per-Pixel Frame Differencing)
 
     private func extractVideoFeatures(from videoURL: URL, totalDuration: TimeInterval, progress: ProgressCallbacks?) async throws -> [FeatureFrame] {
         let asset = AVURLAsset(url: videoURL)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             return []
         }
+
+        let frameRate = try await Double(videoTrack.load(.nominalFrameRate))
 
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(
@@ -48,10 +54,15 @@ final class BasicFeatureExtractor: FeatureExtractor {
         output.alwaysCopiesSampleData = false
         reader.add(output)
 
+        // Process every ~200ms for meaningful motion between frames
+        let frameSkip = max(1, Int(frameRate * 0.2))
+
+        let pixelCount = analysisWidth * analysisHeight
         var frames: [FeatureFrame] = []
-        var previousLuma: Double?
+        var previousGray: [UInt8]?
+        var frameIndex = 0
         var lastReportedProgress: Double = -1
-        let progressReportInterval: Double = 0.02  // report every 2%
+        let progressReportInterval: Double = 0.02
 
         reader.startReading()
         while reader.status == .reading {
@@ -59,13 +70,25 @@ final class BasicFeatureExtractor: FeatureExtractor {
                   let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
 
             let timestamp = CMSampleBufferGetPresentationTimeStamp(sample).seconds
-            let luma = averageLuma(from: pixelBuffer)
-            let motion = previousLuma.map { abs(luma - $0) } ?? 0
-            previousLuma = luma
+            frameIndex += 1
+            guard frameIndex % frameSkip == 0 else { continue }
 
-            frames.append(FeatureFrame(timestamp: timestamp, motionScore: min(motion * 8.0, 1.0), audioScore: 0.0))
+            // Render to grayscale at analysis resolution
+            guard let currentGray = renderToGrayscale(pixelBuffer) else {
+                frames.append(FeatureFrame(timestamp: timestamp, motionScore: 0, audioScore: 0))
+                continue
+            }
 
-            // Report progress based on timestamp / duration
+            let motion: Double
+            if let prev = previousGray {
+                motion = computeMotionScore(prev, currentGray, pixelCount: pixelCount)
+            } else {
+                motion = 0
+            }
+            previousGray = currentGray
+
+            frames.append(FeatureFrame(timestamp: timestamp, motionScore: motion, audioScore: 0.0))
+
             if totalDuration > 0 {
                 let pct = min(timestamp / totalDuration, 1.0)
                 if pct - lastReportedProgress >= progressReportInterval {
@@ -78,7 +101,100 @@ final class BasicFeatureExtractor: FeatureExtractor {
             }
         }
 
-        return bucketize(frames: frames, window: 0.20)
+        return frames
+    }
+
+    // MARK: - Motion Detection (Per-Pixel Frame Differencing)
+
+    /// Compute motion score by comparing grayscale pixel values between frames.
+    /// Focuses on lower 80% of frame (where players are), applies noise threshold,
+    /// and uses a two-tier scoring: fraction of pixels that moved + average movement intensity.
+    private func computeMotionScore(_ prev: [UInt8], _ curr: [UInt8], pixelCount: Int) -> Double {
+        let width = analysisWidth
+        let height = analysisHeight
+
+        // Skip top 20% (ceiling/lights in indoor courts)
+        let startRow = height / 5
+        let noiseThreshold: Int = 12  // Ignore differences below this (sensor noise, compression)
+
+        var movingPixels = 0
+        var totalDiff: Int = 0
+        var regionPixels = 0
+
+        for y in startRow..<height {
+            let rowOffset = y * width
+            for x in 0..<width {
+                let idx = rowOffset + x
+                let diff = abs(Int(curr[idx]) - Int(prev[idx]))
+                regionPixels += 1
+                if diff > noiseThreshold {
+                    movingPixels += 1
+                    totalDiff += diff
+                }
+            }
+        }
+
+        guard regionPixels > 0, movingPixels > 0 else { return 0 }
+
+        // Fraction of pixels with significant motion
+        let motionFraction = Double(movingPixels) / Double(regionPixels)
+
+        // Average intensity of the moving pixels (normalized to 0-1, max diff = 255)
+        let avgIntensity = Double(totalDiff) / Double(movingPixels) / 255.0
+
+        // Combined score: weighted blend of coverage and intensity
+        // During rallies: ~5-20% of pixels move with moderate intensity
+        // Between points: <2% move (people standing still)
+        let score = motionFraction * 0.6 + avgIntensity * 0.4
+
+        // Scale so typical rally motion (~10% moving pixels, ~0.15 avg intensity)
+        // maps to ~0.4-0.6 range
+        return min(score * 4.0, 1.0)
+    }
+
+    // MARK: - Frame Rendering
+
+    /// Render a pixel buffer to a grayscale byte array at analysis resolution.
+    /// Uses CIImage pipeline for fast, GPU-accelerated scaling.
+    private func renderToGrayscale(_ source: CVPixelBuffer) -> [UInt8]? {
+        // Scale to analysis resolution
+        let ciImage = CIImage(cvPixelBuffer: source)
+        let scaleX = CGFloat(analysisWidth) / ciImage.extent.width
+        let scaleY = CGFloat(analysisHeight) / ciImage.extent.height
+        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+
+        guard let cgImage = ciContext.createCGImage(scaled, from: scaled.extent) else {
+            return nil
+        }
+
+        // Render to RGBA then convert to grayscale
+        let width = analysisWidth
+        let height = analysisHeight
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+
+        guard let context = CGContext(
+            data: &rgba,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        // Convert to grayscale using luminance weights
+        var gray = [UInt8](repeating: 0, count: width * height)
+        for i in 0..<(width * height) {
+            let r = Int(rgba[i * 4])
+            let g = Int(rgba[i * 4 + 1])
+            let b = Int(rgba[i * 4 + 2])
+            // ITU-R BT.601 luminance
+            gray[i] = UInt8((r * 77 + g * 150 + b * 29) >> 8)
+        }
+
+        return gray
     }
 
     // MARK: - Audio Merging
@@ -124,55 +240,5 @@ final class BasicFeatureExtractor: FeatureExtractor {
         }
 
         return audioFeatures[low].rallyScore
-    }
-
-    // MARK: - Helpers
-
-    private func averageLuma(from pixelBuffer: CVPixelBuffer) -> Double {
-        let image = CIImage(cvPixelBuffer: pixelBuffer)
-        let extent = image.extent
-        guard let filter = CIFilter(name: "CIAreaAverage") else { return 0 }
-        filter.setValue(image, forKey: kCIInputImageKey)
-        filter.setValue(CIVector(cgRect: extent), forKey: kCIInputExtentKey)
-
-        guard let output = filter.outputImage else { return 0 }
-        var bitmap = [UInt8](repeating: 0, count: 4)
-        ciContext.render(output,
-                         toBitmap: &bitmap,
-                         rowBytes: 4,
-                         bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
-                         format: .RGBA8,
-                         colorSpace: CGColorSpaceCreateDeviceRGB())
-
-        let r = Double(bitmap[0]) / 255.0
-        let g = Double(bitmap[1]) / 255.0
-        let b = Double(bitmap[2]) / 255.0
-        return 0.2126 * r + 0.7152 * g + 0.0722 * b
-    }
-
-    private func bucketize(frames: [FeatureFrame], window: TimeInterval) -> [FeatureFrame] {
-        guard !frames.isEmpty else { return [] }
-        var out: [FeatureFrame] = []
-        var bucketStart = frames[0].timestamp
-        var bucket: [FeatureFrame] = []
-
-        for frame in frames {
-            if frame.timestamp - bucketStart <= window {
-                bucket.append(frame)
-            } else {
-                out.append(aggregate(bucket))
-                bucketStart = frame.timestamp
-                bucket = [frame]
-            }
-        }
-        if !bucket.isEmpty { out.append(aggregate(bucket)) }
-        return out
-    }
-
-    private func aggregate(_ bucket: [FeatureFrame]) -> FeatureFrame {
-        let t = bucket.map(\.timestamp).reduce(0, +) / Double(bucket.count)
-        let m = bucket.map(\.motionScore).reduce(0, +) / Double(bucket.count)
-        let a = bucket.map(\.audioScore).reduce(0, +) / Double(bucket.count)
-        return FeatureFrame(timestamp: t, motionScore: m, audioScore: a)
     }
 }

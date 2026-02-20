@@ -365,6 +365,45 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Find the point adjacent to a trim edge.
+    /// Leading edge → the point whose .end borders the trim's start.
+    /// Trailing edge → the point whose .start borders the trim's end.
+    func adjacentPointForTrim(trimID: UUID, edge: HorizontalEdge) -> UUID? {
+        guard let trim = trimSegments.first(where: { $0.id == trimID }) else { return nil }
+
+        let activePoints = games.flatMap(\.points)
+            .filter { $0.reviewStatus != .deleted }
+            .sorted { $0.start < $1.start }
+
+        if edge == .leading {
+            // Left edge of trim → find point whose end is closest to trim.start
+            return activePoints.last(where: { $0.end <= trim.start + 0.5 })?.id
+        } else {
+            // Right edge of trim → find point whose start is closest to trim.end
+            return activePoints.first(where: { $0.start >= trim.end - 0.5 })?.id
+        }
+    }
+
+    /// Update a point's rally segment start or end time.
+    func updatePointBoundary(pointID: UUID, newStart: TimeInterval? = nil, newEnd: TimeInterval? = nil) {
+        let duration = videoMetadata?.duration ?? .infinity
+        for gameIdx in games.indices {
+            if let pointIdx = games[gameIdx].points.firstIndex(where: { $0.id == pointID }) {
+                if let ns = newStart {
+                    let minStart = max(0, ns)
+                    let maxStart = games[gameIdx].points[pointIdx].rallySegment.end - 0.5
+                    games[gameIdx].points[pointIdx].rallySegment.start = min(minStart, maxStart)
+                }
+                if let ne = newEnd {
+                    let maxEnd = min(duration, ne)
+                    let minEnd = games[gameIdx].points[pointIdx].rallySegment.start + 0.5
+                    games[gameIdx].points[pointIdx].rallySegment.end = max(maxEnd, minEnd)
+                }
+                return
+            }
+        }
+    }
+
     // MARK: - Export
 
     // MARK: - Hit Model Training

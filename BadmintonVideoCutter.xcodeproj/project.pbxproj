@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		037DACC7DBB40A439212D1F1 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E631C17014F8A2AD77CAA9F /* Models.swift */; };
 		057C041BB97EB0EC320A1F6C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957CDC923188260D7B13CDCA /* ContentView.swift */; };
+		B1B1B1B1B1B1B1B1B1B1B1B1 /* BasicFeatureExtractorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A1A1A1A1A1A1A1A1A1A1A1 /* BasicFeatureExtractorTests.swift */; };
 		21BB9C29BC55D238F9AFDE6D /* HybridSegmenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */; };
 		43E222E482AA3DC63053D866 /* Protocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD050C783FA64A3D9E43626 /* Protocols.swift */; };
 		5CC8F05945B3C9D77742DFA8 /* ModelPackageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44452A77F3373C5C02934EAD /* ModelPackageService.swift */; };
@@ -70,6 +71,7 @@
 		DB59F9E1011165EBB9D6991F /* VideoImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoImporter.swift; sourceTree = "<group>"; };
 		DBBDD2F3960CFF8793CC518F /* VideoExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoExporter.swift; sourceTree = "<group>"; };
 		E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicFeatureExtractor.swift; sourceTree = "<group>"; };
+		A1A1A1A1A1A1A1A1A1A1A1A1 /* BasicFeatureExtractorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicFeatureExtractorTests.swift; sourceTree = "<group>"; };
 		F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridSegmenterTests.swift; sourceTree = "<group>"; };
 		F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridSegmenter.swift; sourceTree = "<group>"; };
 		AA11111111111111AA111111 /* AudioAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAnalyzer.swift; sourceTree = "<group>"; };
@@ -180,6 +182,7 @@
 		A629D74AEA32A2537AB31D0E /* SegmentationTests */ = {
 			isa = PBXGroup;
 			children = (
+				A1A1A1A1A1A1A1A1A1A1A1A1 /* BasicFeatureExtractorTests.swift */,
 				F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */,
 			);
 			path = SegmentationTests;
@@ -296,6 +299,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B1B1B1B1B1B1B1B1B1B1B1B1 /* BasicFeatureExtractorTests.swift in Sources */,
 				21BB9C29BC55D238F9AFDE6D /* HybridSegmenterTests.swift in Sources */,
 				94C4A7DEAC0442730297BB4C /* SegmentUtilsTests.swift in Sources */,
 			);

@@ -42,7 +42,8 @@ struct TimelineTabView: View {
                     TrimOverlayTimelineView(
                         appState: appState,
                         viewport: $viewport,
-                        playheadTime: $playheadTime
+                        playheadTime: $playheadTime,
+                        selectedPointID: $selectedPointID
                     )
                     .frame(height: 60)
                 }
@@ -88,6 +89,12 @@ struct TimelineTabView: View {
                 previewPoint(point)
             }
             .frame(minWidth: 280, maxWidth: 350)
+            .onAppear {
+                // Trigger serve detection if games exist but scores haven't been computed yet
+                if !appState.games.isEmpty && appState.pointScores.isEmpty {
+                    appState.detectServesAndScores()
+                }
+            }
         }
     }
 
@@ -242,6 +249,7 @@ struct TrimOverlayTimelineView: View {
     @ObservedObject var appState: AppState
     @Binding var viewport: TimelineViewport
     @Binding var playheadTime: TimeInterval
+    @Binding var selectedPointID: UUID?
 
     var body: some View {
         GeometryReader { geo in
@@ -274,7 +282,7 @@ struct TrimOverlayTimelineView: View {
                         .frame(width: max(1, w), height: height)
                         .offset(x: x)
 
-                    // Left drag handle
+                    // Left drag handle — adjusts the end of the preceding point
                     TrimDragHandle(edge: .leading)
                         .offset(x: x - 4)
                         .gesture(
@@ -282,10 +290,14 @@ struct TrimOverlayTimelineView: View {
                                 .onChanged { value in
                                     let newTime = xToTime(value.location.x, width: width)
                                     appState.updateTrimBoundary(trimID: trim.id, newStart: newTime)
+                                    if let pointID = appState.adjacentPointForTrim(trimID: trim.id, edge: .leading) {
+                                        appState.updatePointBoundary(pointID: pointID, newEnd: newTime)
+                                        selectedPointID = pointID
+                                    }
                                 }
                         )
 
-                    // Right drag handle
+                    // Right drag handle — adjusts the start of the following point
                     TrimDragHandle(edge: .trailing)
                         .offset(x: x + max(1, w) - 4)
                         .gesture(
@@ -293,6 +305,10 @@ struct TrimOverlayTimelineView: View {
                                 .onChanged { value in
                                     let newTime = xToTime(value.location.x, width: width)
                                     appState.updateTrimBoundary(trimID: trim.id, newEnd: newTime)
+                                    if let pointID = appState.adjacentPointForTrim(trimID: trim.id, edge: .trailing) {
+                                        appState.updatePointBoundary(pointID: pointID, newStart: newTime)
+                                        selectedPointID = pointID
+                                    }
                                 }
                         )
                 }
