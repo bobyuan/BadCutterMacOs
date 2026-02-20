@@ -40,7 +40,7 @@ final class BasicFeatureExtractorTests: XCTestCase {
         let highMotion = scores.filter { $0 >= 0.5 }.count
         let avgAudio = frames.map(\.audioScore).reduce(0, +) / Double(frames.count)
 
-        print("Feature extraction complete (shuttlecock-aware motion):")
+        print("Feature extraction complete (shuttlecock blob detection at dynamic resolution):")
         print("  Total frames: \(frames.count)")
         print("  Non-zero motion: \(nonZeroMotion.count) (\(String(format: "%.0f", Double(nonZeroMotion.count) / Double(frames.count) * 100))%)")
         print("  Avg motion: \(String(format: "%.4f", avgMotion))")
@@ -103,18 +103,22 @@ final class BasicFeatureExtractorTests: XCTestCase {
 
         // Get diagnostic info for each pick
         print("\n=== VISUAL VERIFICATION FRAME LIST ===")
-        print("Format: timestamp | motion | audio | white_px | general | label | bucket")
-        print(String(repeating: "-", count: 85))
+        print("Format: timestamp | motion | audio | shuttle | spread(regions) | general | label | bucket")
+        print(String(repeating: "-", count: 110))
         for (frame, bucket) in picks {
             let diagInfo = diag.first(where: { abs($0.timestamp - frame.timestamp) < 0.05 })
-            let whitePx = diagInfo?.displacedWhiteCount ?? -1
+            let shuttle = diagInfo?.shuttlecockScore ?? -1
+            let spread = diagInfo?.spreadScore ?? -1
+            let regions = diagInfo?.activeRegions ?? -1
             let general = diagInfo?.generalMotionScore ?? -1
             let label = labelAt(frame.timestamp)
             let ts = String(format: "%7.2f", frame.timestamp)
             let mot = String(format: "%.3f", frame.motionScore)
             let aud = String(format: "%.3f", frame.audioScore)
+            let sht = String(format: "%.3f", shuttle)
+            let spr = String(format: "%.3f", spread)
             let gen = String(format: "%.3f", general)
-            print("t=\(ts)s | mot=\(mot) | aud=\(aud) | white=\(whitePx) | gen=\(gen) | \(label) | \(bucket)")
+            print("t=\(ts)s | mot=\(mot) | aud=\(aud) | shuttle=\(sht) | spread=\(spr)(\(regions)) | gen=\(gen) | \(label) | \(bucket)")
         }
 
         // Also print segment summary
@@ -138,8 +142,7 @@ final class BasicFeatureExtractorTests: XCTestCase {
         for (frame, bucket) in picks {
             let ts = frame.timestamp
             let label = labelAt(ts)
-            let fname = String(format: "t%07.2f_mot%.3f_%s_%s.jpg",
-                               ts, frame.motionScore, label, bucket)
+            let fname = "t\(String(format: "%07.2f", ts))_mot\(String(format: "%.3f", frame.motionScore))_\(label)_\(bucket).jpg"
                 .replacingOccurrences(of: " ", with: "")
             print("ffmpeg -ss \(String(format: "%.2f", ts)) -i \"\(video)\" -frames:v 1 -q:v 2 \"\(dir)/\(fname)\" -y 2>/dev/null")
         }
@@ -161,29 +164,73 @@ final class BasicFeatureExtractorTests: XCTestCase {
             return
         }
 
+        // Displaced white pixel distribution
         let counts = diag.map(\.displacedWhiteCount)
-        let sorted = counts.sorted()
+        let sortedCounts = counts.sorted()
         let avgCount = Double(counts.reduce(0, +)) / Double(counts.count)
 
-        print("Displaced white pixel distribution:")
+        print("Displaced white pixel distribution (at dynamic resolution):")
         print("  Total frames: \(counts.count)")
-        print("  Min: \(sorted.first!), Max: \(sorted.last!)")
+        print("  Min: \(sortedCounts.first!), Max: \(sortedCounts.last!)")
         print("  Avg: \(String(format: "%.1f", avgCount))")
-        print("  Median (p50): \(sorted[sorted.count / 2])")
-        print("  p10: \(sorted[sorted.count / 10])")
-        print("  p25: \(sorted[sorted.count / 4])")
-        print("  p75: \(sorted[sorted.count * 3 / 4])")
-        print("  p90: \(sorted[sorted.count * 9 / 10])")
-        print("  p95: \(sorted[sorted.count * 19 / 20])")
+        print("  Median (p50): \(sortedCounts[sortedCounts.count / 2])")
+        print("  p10: \(sortedCounts[sortedCounts.count / 10])")
+        print("  p25: \(sortedCounts[sortedCounts.count / 4])")
+        print("  p75: \(sortedCounts[sortedCounts.count * 3 / 4])")
+        print("  p90: \(sortedCounts[sortedCounts.count * 9 / 10])")
+        print("  p95: \(sortedCounts[sortedCounts.count * 19 / 20])")
 
-        // Bucket distribution
-        let under10 = counts.filter { $0 < 10 }.count
-        let under50 = counts.filter { $0 >= 10 && $0 < 50 }.count
-        let under100 = counts.filter { $0 >= 50 && $0 < 100 }.count
-        let under200 = counts.filter { $0 >= 100 && $0 < 200 }.count
+        // Bucket distribution for displaced white pixels
+        let under50 = counts.filter { $0 < 50 }.count
+        let under200 = counts.filter { $0 >= 50 && $0 < 200 }.count
         let under500 = counts.filter { $0 >= 200 && $0 < 500 }.count
-        let over500 = counts.filter { $0 >= 500 }.count
-        print("  Buckets: <10=\(under10) 10-50=\(under50) 50-100=\(under100) 100-200=\(under200) 200-500=\(under500) >=500=\(over500)")
+        let under1000 = counts.filter { $0 >= 500 && $0 < 1000 }.count
+        let under2000 = counts.filter { $0 >= 1000 && $0 < 2000 }.count
+        let over2000 = counts.filter { $0 >= 2000 }.count
+        print("  Buckets: <50=\(under50) 50-200=\(under200) 200-500=\(under500) 500-1k=\(under1000) 1k-2k=\(under2000) >=2k=\(over2000)")
+
+        // Max cluster sum distribution (spatial concentration)
+        let clusters = diag.map(\.maxClusterSum)
+        let sortedClusters = clusters.sorted()
+        let avgCluster = Double(clusters.reduce(0, +)) / Double(clusters.count)
+        print("\nMax cluster sum (5x5 neighborhood) distribution:")
+        print("  Avg: \(String(format: "%.1f", avgCluster))")
+        print("  Median: \(sortedClusters[sortedClusters.count / 2])")
+        print("  p75: \(sortedClusters[sortedClusters.count * 3 / 4])")
+        print("  p90: \(sortedClusters[sortedClusters.count * 9 / 10])")
+        print("  p95: \(sortedClusters[sortedClusters.count * 19 / 20])")
+        print("  Max: \(sortedClusters.last!)")
+
+        // Shuttlecock score distribution
+        let sScores = diag.map(\.shuttlecockScore)
+        let sortedShuttle = sScores.sorted()
+        let avgShuttle = sScores.reduce(0, +) / Double(sScores.count)
+        print("\nShuttlecock score distribution:")
+        print("  Avg: \(String(format: "%.4f", avgShuttle))")
+        print("  Median: \(String(format: "%.4f", sortedShuttle[sortedShuttle.count / 2]))")
+        print("  p75: \(String(format: "%.4f", sortedShuttle[sortedShuttle.count * 3 / 4]))")
+        print("  p90: \(String(format: "%.4f", sortedShuttle[sortedShuttle.count * 9 / 10]))")
+
+        // Motion spread (active regions) distribution
+        let regionCounts = diag.map(\.activeRegions)
+        let sortedRegions = regionCounts.sorted()
+        let avgRegions = Double(regionCounts.reduce(0, +)) / Double(regionCounts.count)
+        print("\nMotion spread (active regions out of 24):")
+        print("  Avg: \(String(format: "%.1f", avgRegions))")
+        print("  Median: \(sortedRegions[sortedRegions.count / 2])")
+        print("  p25: \(sortedRegions[sortedRegions.count / 4])")
+        print("  p75: \(sortedRegions[sortedRegions.count * 3 / 4])")
+        print("  p90: \(sortedRegions[sortedRegions.count * 9 / 10])")
+        print("  Max: \(sortedRegions.last!)")
+
+        let sprScores = diag.map(\.spreadScore)
+        let sortedSpread = sprScores.sorted()
+        let avgSpread = sprScores.reduce(0, +) / Double(sprScores.count)
+        print("\nSpread score distribution:")
+        print("  Avg: \(String(format: "%.4f", avgSpread))")
+        print("  Median: \(String(format: "%.4f", sortedSpread[sortedSpread.count / 2]))")
+        print("  p75: \(String(format: "%.4f", sortedSpread[sortedSpread.count * 3 / 4]))")
+        print("  p90: \(String(format: "%.4f", sortedSpread[sortedSpread.count * 9 / 10]))")
 
         // General motion score distribution
         let gScores = diag.map(\.generalMotionScore)
@@ -191,12 +238,12 @@ final class BasicFeatureExtractorTests: XCTestCase {
         let maxGeneral = gScores.max() ?? 0
         print("\nGeneral motion score: avg=\(String(format: "%.4f", avgGeneral)) max=\(String(format: "%.4f", maxGeneral))")
 
-        // Sample some frames at different timestamps
+        // Sample frames
         print("\nSample frames (every ~60s):")
         let step = max(1, diag.count / 16)
         for i in stride(from: 0, to: diag.count, by: step) {
             let d = diag[i]
-            print("  t=\(String(format: "%6.1f", d.timestamp))s  white=\(String(format: "%4d", d.displacedWhiteCount))  general=\(String(format: "%.3f", d.generalMotionScore))  blended=\(String(format: "%.3f", d.blendedScore))")
+            print("  t=\(String(format: "%6.1f", d.timestamp))s  regions=\(String(format: "%2d", d.activeRegions))  spread=\(String(format: "%.3f", d.spreadScore))  shuttle=\(String(format: "%.3f", d.shuttlecockScore))  general=\(String(format: "%.3f", d.generalMotionScore))  blended=\(String(format: "%.3f", d.blendedScore))")
         }
     }
 }

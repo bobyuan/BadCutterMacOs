@@ -53,17 +53,17 @@ enum SensitivityPreset: String, CaseIterable, Codable, Identifiable {
 
     var motionWeight: Double {
         switch self {
-        case .conservative: return 0.75
-        case .balanced: return 0.65
-        case .aggressive: return 0.55
+        case .conservative: return 0.95
+        case .balanced: return 0.90
+        case .aggressive: return 0.80
         }
     }
 
     var audioWeight: Double {
         switch self {
-        case .conservative: return 0.25
-        case .balanced: return 0.35
-        case .aggressive: return 0.45
+        case .conservative: return 0.05
+        case .balanced: return 0.10
+        case .aggressive: return 0.20
         }
     }
 }
@@ -73,8 +73,8 @@ struct AnalysisConfig: Codable {
     var minBetweenPointsDuration: TimeInterval = 1.5
     var flipHysteresisSeconds: TimeInterval = 1.0
     var rallyPercentile: Double = 0.68
-    var motionWeight: Double = 0.65
-    var audioWeight: Double = 0.35
+    var motionWeight: Double = 0.90
+    var audioWeight: Double = 0.10
     var preRollSeconds: TimeInterval = 1.5
     var maxExpectedRallyDuration: TimeInterval = 25.0
     var minDipDuration: TimeInterval = 1.5

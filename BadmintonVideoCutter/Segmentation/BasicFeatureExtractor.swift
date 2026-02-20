@@ -6,10 +6,6 @@ final class BasicFeatureExtractor: FeatureExtractor {
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private let audioAnalyzer = AudioAnalyzer()
 
-    /// Resolution for motion analysis. 320x180 gives good accuracy at reasonable cost.
-    private let analysisWidth = 320
-    private let analysisHeight = 180
-
     struct ProgressCallbacks {
         var onAudioProgress: @MainActor (Double) -> Void
         var onVideoProgress: @MainActor (Double) -> Void
@@ -36,7 +32,21 @@ final class BasicFeatureExtractor: FeatureExtractor {
         return mergeAudioIntoVideo(videoFrames: video, audioFeatures: audio)
     }
 
-    // MARK: - Video Feature Extraction (Shuttlecock-Aware Motion Detection)
+    // MARK: - Dynamic Resolution
+
+    /// Compute analysis resolution from video's native size.
+    /// Uses half-native resolution, capped at 960x540, minimum 320x180.
+    /// Higher resolution allows detecting the shuttlecock as a distinct blob
+    /// (~20-30px diameter at half-native vs ~2-5px at 320x180).
+    private static func analysisResolution(for naturalSize: CGSize) -> (width: Int, height: Int) {
+        let halfW = Int(naturalSize.width) / 2
+        let halfH = Int(naturalSize.height) / 2
+        let w = max(320, min(960, halfW))
+        let h = max(180, min(540, halfH))
+        return (w, h)
+    }
+
+    // MARK: - Video Feature Extraction
 
     private func extractVideoFeatures(from videoURL: URL, totalDuration: TimeInterval, progress: ProgressCallbacks?) async throws -> [FeatureFrame] {
         let asset = AVURLAsset(url: videoURL)
@@ -45,6 +55,10 @@ final class BasicFeatureExtractor: FeatureExtractor {
         }
 
         let frameRate = try await Double(videoTrack.load(.nominalFrameRate))
+        let naturalSize = try await videoTrack.load(.naturalSize)
+        let (analysisWidth, analysisHeight) = Self.analysisResolution(for: naturalSize)
+
+        print("Shuttlecock detection: native=\(Int(naturalSize.width))x\(Int(naturalSize.height)) → analysis=\(analysisWidth)x\(analysisHeight)")
 
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(
@@ -63,6 +77,8 @@ final class BasicFeatureExtractor: FeatureExtractor {
         var lastReportedProgress: Double = -1
         let progressReportInterval: Double = 0.02
 
+        diagnostics = []
+
         reader.startReading()
         while reader.status == .reading {
             guard let sample = output.copyNextSampleBuffer(),
@@ -72,15 +88,14 @@ final class BasicFeatureExtractor: FeatureExtractor {
             frameIndex += 1
             guard frameIndex % frameSkip == 0 else { continue }
 
-            // Render to RGBA at analysis resolution (need color channels for white detection)
-            guard let currentRGBA = renderToRGBA(pixelBuffer) else {
+            guard let currentRGBA = renderToRGBA(pixelBuffer, width: analysisWidth, height: analysisHeight) else {
                 frames.append(FeatureFrame(timestamp: timestamp, motionScore: 0, audioScore: 0))
                 continue
             }
 
             let motion: Double
             if let prev = previousRGBA {
-                motion = computeMotionScore(prev, currentRGBA, timestamp: timestamp)
+                motion = computeMotionScore(prev, currentRGBA, width: analysisWidth, height: analysisHeight, timestamp: timestamp)
             } else {
                 motion = 0
             }
@@ -103,46 +118,67 @@ final class BasicFeatureExtractor: FeatureExtractor {
         return frames
     }
 
-    // MARK: - Motion Detection (Shuttlecock White-Motion + General Motion)
+    // MARK: - Motion Detection (Shuttlecock Blob Detection + General Motion)
 
-    /// Raw diagnostic data from the last extraction run.
-    /// Only populated when `collectDiagnostics` is true.
     struct MotionDiagnostics {
         var timestamp: TimeInterval
         var displacedWhiteCount: Int
+        var maxClusterSum: Int
+        var shuttlecockScore: Double
         var generalMotionScore: Double
+        var activeRegions: Int
+        var spreadScore: Double
         var blendedScore: Double
     }
     var collectDiagnostics = false
     private(set) var diagnostics: [MotionDiagnostics] = []
 
-    /// Compute blended motion score combining shuttlecock-specific white-pixel displacement
-    /// with general frame differencing.
+    /// Detect shuttlecock movement using spatially-clustered white-pixel displacement
+    /// at dynamic resolution, combined with general frame differencing.
     ///
-    /// The shuttlecock is a small, bright white object that moves rapidly during rallies.
-    /// By tracking "displaced white pixels" (white at position (x,y) in one frame but not
-    /// the other), we get a direct signal for shuttlecock movement. Static white elements
-    /// like court lines contribute zero since they stay in the same position.
-    private func computeMotionScore(_ prevRGBA: [UInt8], _ currRGBA: [UInt8], timestamp: TimeInterval = 0) -> Double {
-        let width = analysisWidth
-        let height = analysisHeight
-
+    /// At half-native resolution (e.g., 960x540 for 1080p video), the shuttlecock is
+    /// ~20-30px diameter — large enough to form a distinct blob of displaced white pixels.
+    /// A grid-based spatial filter finds the densest concentration of displaced white pixels,
+    /// distinguishing the compact shuttlecock from scattered noise (player clothing, etc.).
+    private func computeMotionScore(_ prevRGBA: [UInt8], _ currRGBA: [UInt8], width: Int, height: Int, timestamp: TimeInterval = 0) -> Double {
         // Skip top 20% (ceiling/lights in indoor courts)
         let startRow = height / 5
         let noiseThreshold: Int = 12
-        let luminanceThreshold: Int = 200  // Bright pixels (shuttlecock is very bright)
-        let saturationThreshold: Int = 50  // Low saturation = white/gray, not colored
+        let luminanceThreshold: Int = 200
+        let saturationThreshold: Int = 50
 
-        var displacedWhiteCount = 0
+        // Fine grid for spatial clustering of displaced white pixels (shuttlecock detection)
+        let cellSize = 16
+        let gridW = (width + cellSize - 1) / cellSize
+        let gridH = ((height - startRow) + cellSize - 1) / cellSize
+        var grid = [Int](repeating: 0, count: gridW * gridH)
+
+        // Coarse grid for multi-region motion spread (rally vs break detection)
+        // During rallies, 3-4 players move simultaneously across the court → many active regions.
+        // During breaks, 0-1 people move → few active regions.
+        let spreadCols = 6
+        let spreadRows = 4
+        let spreadCellW = max(1, width / spreadCols)
+        let spreadCellH = max(1, (height - startRow) / spreadRows)
+        let spreadCellCount = spreadCols * spreadRows
+        var spreadMoving = [Int](repeating: 0, count: spreadCellCount)
+        var spreadTotal = [Int](repeating: 0, count: spreadCellCount)
+
+        var totalDisplacedWhite = 0
         var movingPixels = 0
         var totalDiff: Int = 0
         var regionPixels = 0
 
         for y in startRow..<height {
             let rowOffset = y * width
+            let gridY = (y - startRow) / cellSize
+            let sRow = min((y - startRow) / spreadCellH, spreadRows - 1)
             for x in 0..<width {
                 let idx = rowOffset + x
                 let rgbaIdx = idx * 4
+                let gridX = x / cellSize
+                let sCol = min(x / spreadCellW, spreadCols - 1)
+                let sIdx = sRow * spreadCols + sCol
 
                 // Current pixel RGB
                 let cR = Int(currRGBA[rgbaIdx])
@@ -167,28 +203,57 @@ final class BasicFeatureExtractor: FeatureExtractor {
                 let prevMinCh = min(pR, min(pG, pB))
                 let prevIsWhite = prevLum > luminanceThreshold && (prevMaxCh - prevMinCh) < saturationThreshold
 
-                // Displaced white: white in one frame but not the other at same position
-                // This captures shuttlecock arriving at or departing from this pixel
+                // Displaced white pixel → record in grid cell
                 if currIsWhite != prevIsWhite {
-                    displacedWhiteCount += 1
+                    totalDisplacedWhite += 1
+                    if gridY < gridH && gridX < gridW {
+                        grid[gridY * gridW + gridX] += 1
+                    }
                 }
 
                 // General motion (luminance-based frame differencing)
                 regionPixels += 1
+                spreadTotal[sIdx] += 1
                 let lumDiff = abs(currLum - prevLum)
                 if lumDiff > noiseThreshold {
                     movingPixels += 1
                     totalDiff += lumDiff
+                    spreadMoving[sIdx] += 1
                 }
             }
         }
 
-        // White-motion score: displaced white pixels correlate with activity level.
-        // Median count is ~18, p90 is ~41 at 320x180. Use sqrt to compress outliers
-        // while preserving sensitivity at lower counts.
-        let shuttlecockScore = min(sqrt(Double(displacedWhiteCount)) / 7.0, 1.0)
+        // Shuttlecock detection: find densest cluster of displaced white pixels.
+        // Use a 5x5 neighborhood scan on the grid. The shuttlecock creates a compact
+        // cluster (fits in ~3x3 cells at half-native) while player clothing displacement
+        // is spread across many more cells.
+        let neighborhoodRadius = 2
+        var maxClusterSum = 0
+        for gy in 0..<gridH {
+            for gx in 0..<gridW {
+                var sum = 0
+                let yLo = max(0, gy - neighborhoodRadius)
+                let yHi = min(gridH - 1, gy + neighborhoodRadius)
+                let xLo = max(0, gx - neighborhoodRadius)
+                let xHi = min(gridW - 1, gx + neighborhoodRadius)
+                for ny in yLo...yHi {
+                    for nx in xLo...xHi {
+                        sum += grid[ny * gridW + nx]
+                    }
+                }
+                maxClusterSum = max(maxClusterSum, sum)
+            }
+        }
 
-        // General motion score (same approach as before)
+        // Shuttlecock score: normalize based on expected displaced pixel count.
+        // At 960x540, shuttlecock is ~25px diameter → ~500 displaced white pixels
+        // (area of shuttlecock in prev + curr, minus overlap).
+        // Scale quadratically with resolution.
+        let resolutionScale = Double(width) / 960.0
+        let expectedPixels = 200.0 * max(resolutionScale * resolutionScale, 0.1)
+        let shuttlecockScore = min(Double(maxClusterSum) / expectedPixels, 1.0)
+
+        // General motion score
         let generalMotionScore: Double
         if regionPixels > 0, movingPixels > 0 {
             let motionFraction = Double(movingPixels) / Double(regionPixels)
@@ -199,16 +264,40 @@ final class BasicFeatureExtractor: FeatureExtractor {
             generalMotionScore = 0
         }
 
-        // Multiplicative boost: white-motion amplifies general motion rather than raising the floor.
-        // This preserves the dynamic range for low-activity periods (breaks, between-points)
-        // while giving a modest boost to high-activity frames with shuttlecock/player movement.
-        let blended = min(generalMotionScore * (1.0 + 0.3 * shuttlecockScore), 1.0)
+        // Multi-region motion spread: count how many coarse regions have significant motion.
+        // During rallies, 3-4 players move across the court → 6-12 active regions (of 24).
+        // During breaks, 0-1 people walking → 0-3 active regions.
+        let spreadActiveThreshold = 0.015 // 1.5% of pixels in a region must be moving
+        var activeRegions = 0
+        for i in 0..<spreadCellCount {
+            if spreadTotal[i] > 0 {
+                let fraction = Double(spreadMoving[i]) / Double(spreadTotal[i])
+                if fraction > spreadActiveThreshold {
+                    activeRegions += 1
+                }
+            }
+        }
+        // Normalize: 8+ active regions = full score (typical rally with 4 players)
+        let spreadScore = min(Double(activeRegions) / 8.0, 1.0)
+
+        // Three-signal blend:
+        //   generalMotion * (base + shuttlecockBoost + spreadBoost)
+        //   base=0.3: floor when no shuttlecock or spread detected
+        //   Each signal contributes up to 0.35 boost
+        //   Full rally (both=1.0): multiplier = 1.0
+        //   Full break (both=0.0): multiplier = 0.3
+        //   This creates ~3x gap between rally and break scores.
+        let blended = min(generalMotionScore * (0.3 + 0.35 * shuttlecockScore + 0.35 * spreadScore), 1.0)
 
         if collectDiagnostics {
             diagnostics.append(MotionDiagnostics(
                 timestamp: timestamp,
-                displacedWhiteCount: displacedWhiteCount,
+                displacedWhiteCount: totalDisplacedWhite,
+                maxClusterSum: maxClusterSum,
+                shuttlecockScore: shuttlecockScore,
                 generalMotionScore: generalMotionScore,
+                activeRegions: activeRegions,
+                spreadScore: spreadScore,
                 blendedScore: blended
             ))
         }
@@ -218,20 +307,18 @@ final class BasicFeatureExtractor: FeatureExtractor {
 
     // MARK: - Frame Rendering
 
-    /// Render a pixel buffer to an RGBA byte array at analysis resolution.
+    /// Render a pixel buffer to an RGBA byte array at the specified resolution.
     /// Uses CIImage pipeline for fast, GPU-accelerated scaling.
-    private func renderToRGBA(_ source: CVPixelBuffer) -> [UInt8]? {
+    private func renderToRGBA(_ source: CVPixelBuffer, width: Int, height: Int) -> [UInt8]? {
         let ciImage = CIImage(cvPixelBuffer: source)
-        let scaleX = CGFloat(analysisWidth) / ciImage.extent.width
-        let scaleY = CGFloat(analysisHeight) / ciImage.extent.height
+        let scaleX = CGFloat(width) / ciImage.extent.width
+        let scaleY = CGFloat(height) / ciImage.extent.height
         let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
 
         guard let cgImage = ciContext.createCGImage(scaled, from: scaled.extent) else {
             return nil
         }
 
-        let width = analysisWidth
-        let height = analysisHeight
         var rgba = [UInt8](repeating: 0, count: width * height * 4)
 
         guard let context = CGContext(

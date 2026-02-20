@@ -79,12 +79,11 @@ struct GameDetector {
         }
         guard gapFrames.count >= 3 else { return gap }
 
-        // Compute combined activity score for each frame (same blend as HybridSegmenter)
+        // Use motion score directly for break validation.
+        // Audio is unreliable (often 0 during active play), so checking motion alone
+        // prevents false game breaks in regions where players are actively playing.
         let scores = gapFrames.map { frame -> (time: TimeInterval, score: Double) in
-            let additive = 0.65 * frame.motionScore + 0.35 * frame.audioScore
-            let multiplicative = sqrt(frame.motionScore * frame.audioScore)
-            let combined = 0.7 * additive + 0.3 * multiplicative
-            return (time: frame.timestamp, score: combined)
+            (time: frame.timestamp, score: frame.motionScore)
         }
 
         // Check overall activity: if the average is high, this isn't a real break
