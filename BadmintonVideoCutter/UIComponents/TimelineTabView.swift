@@ -26,6 +26,20 @@ struct TimelineTabView: View {
                                 .fill(Color.red.opacity(0.25))
                                 .allowsHitTesting(false)
                         }
+
+                        // Shuttlecock detection overlay: shows a rectangle at
+                        // the detected position so the user can verify accuracy
+                        if let pos = shuttlecockPositionAtPlayhead {
+                            GeometryReader { geo in
+                                let boxSize: CGFloat = 40
+                                Rectangle()
+                                    .stroke(Color.green, lineWidth: 2)
+                                    .frame(width: boxSize, height: boxSize)
+                                    .position(x: CGFloat(pos.x) * geo.size.width,
+                                              y: CGFloat(pos.y) * geo.size.height)
+                            }
+                            .allowsHitTesting(false)
+                        }
                     }
                     .onAppear { setupTimeObserver(player) }
                     .onDisappear { removeTimeObserver(player) }
@@ -116,6 +130,38 @@ struct TimelineTabView: View {
         appState.trimSegments.contains { trim in
             trim.reviewStatus != .flagged && playheadTime >= trim.start && playheadTime <= trim.end
         }
+    }
+
+    // MARK: - Shuttlecock Position Overlay
+
+    /// Returns the detected shuttlecock position for the current playhead time.
+    /// Uses binary search to find the nearest analyzed frame.
+    private var shuttlecockPositionAtPlayhead: (x: Double, y: Double)? {
+        let frames = appState.featureFrames
+        guard !frames.isEmpty else { return nil }
+
+        // Binary search for the nearest frame
+        var lo = 0, hi = frames.count - 1
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if frames[mid].timestamp < playheadTime {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
+        }
+
+        // Check the closest frame (lo or lo-1)
+        var bestIdx = lo
+        if lo > 0 {
+            let dLo = abs(frames[lo].timestamp - playheadTime)
+            let dPrev = abs(frames[lo - 1].timestamp - playheadTime)
+            if dPrev < dLo { bestIdx = lo - 1 }
+        }
+
+        // Only show if the frame is within 0.3s of playhead (don't stale-display)
+        guard abs(frames[bestIdx].timestamp - playheadTime) < 0.3 else { return nil }
+        return frames[bestIdx].shuttlecockPosition
     }
 
     private func scrollViewport(deltaX: CGFloat) {

@@ -114,15 +114,15 @@ final class BasicFeatureExtractor: FeatureExtractor {
                 continue
             }
 
-            let scores: (motion: Double, shuttlecockFlight: Double)
+            let scores: (motion: Double, shuttlecockFlight: Double, shuttlecockPos: (x: Double, y: Double)?)
             if let prev = previousRGBA {
                 scores = computeMotionScore(prev, currentRGBA, width: analysisWidth, height: analysisHeight, timestamp: timestamp, personCount: lastPersonCount)
             } else {
-                scores = (motion: 0, shuttlecockFlight: 0)
+                scores = (motion: 0, shuttlecockFlight: 0, shuttlecockPos: nil)
             }
             previousRGBA = currentRGBA
 
-            frames.append(FeatureFrame(timestamp: timestamp, motionScore: scores.motion, audioScore: 0.0, shuttlecockFlightScore: scores.shuttlecockFlight))
+            frames.append(FeatureFrame(timestamp: timestamp, motionScore: scores.motion, audioScore: 0.0, shuttlecockFlightScore: scores.shuttlecockFlight, shuttlecockPosition: scores.shuttlecockPos))
 
             if totalDuration > 0 {
                 let pct = min(timestamp / totalDuration, 1.0)
@@ -224,8 +224,8 @@ final class BasicFeatureExtractor: FeatureExtractor {
     /// ~20-30px diameter — large enough to form a distinct blob of displaced white pixels.
     /// A grid-based spatial filter finds the densest concentration of displaced white pixels,
     /// distinguishing the compact shuttlecock from scattered noise (player clothing, etc.).
-    /// Returns (blendedMotionScore, shuttlecockFlightScore)
-    private func computeMotionScore(_ prevRGBA: [UInt8], _ currRGBA: [UInt8], width: Int, height: Int, timestamp: TimeInterval = 0, personCount: Int = 0) -> (motion: Double, shuttlecockFlight: Double) {
+    /// Returns (blendedMotionScore, shuttlecockFlightScore, shuttlecockPosition)
+    private func computeMotionScore(_ prevRGBA: [UInt8], _ currRGBA: [UInt8], width: Int, height: Int, timestamp: TimeInterval = 0, personCount: Int = 0) -> (motion: Double, shuttlecockFlight: Double, shuttlecockPos: (x: Double, y: Double)?) {
         // Skip top 20% (ceiling/lights in indoor courts)
         let startRow = height / 5
         let noiseThreshold: Int = 12
@@ -445,7 +445,15 @@ final class BasicFeatureExtractor: FeatureExtractor {
             ))
         }
 
-        return (motion: blended, shuttlecockFlight: flightScore)
+        // Normalize shuttlecock position to 0-1 range (relative to full frame)
+        let shuttlecockPos: (x: Double, y: Double)?
+        if let arr = arrivedCluster, rawFlightScore > 0 {
+            shuttlecockPos = (x: arr.x / Double(width), y: arr.y / Double(height))
+        } else {
+            shuttlecockPos = nil
+        }
+
+        return (motion: blended, shuttlecockFlight: flightScore, shuttlecockPos: shuttlecockPos)
     }
 
     // MARK: - Cluster Detection
@@ -563,7 +571,8 @@ final class BasicFeatureExtractor: FeatureExtractor {
                 timestamp: frame.timestamp,
                 motionScore: frame.motionScore,
                 audioScore: audioScore,
-                shuttlecockFlightScore: frame.shuttlecockFlightScore
+                shuttlecockFlightScore: frame.shuttlecockFlightScore,
+                shuttlecockPosition: frame.shuttlecockPosition
             )
         }
     }

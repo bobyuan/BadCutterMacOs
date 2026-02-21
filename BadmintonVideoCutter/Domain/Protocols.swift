@@ -21,6 +21,10 @@ struct FeatureFrame: Sendable {
     var motionScore: Double
     var audioScore: Double
     /// Shuttlecock in-flight confidence (0 = not detected, 1 = fast flight confirmed).
-    /// Based on velocity-tracked blob detection across consecutive frames.
+    /// Based on arrived/departed cluster displacement within frame pairs.
     var shuttlecockFlightScore: Double = 0
+    /// Detected shuttlecock position in normalized coordinates (0-1).
+    /// nil when no shuttlecock detected. Based on the "arrived" cluster centroid
+    /// (where new white pixels appeared = shuttlecock's current position).
+    var shuttlecockPosition: (x: Double, y: Double)? = nil
 }
