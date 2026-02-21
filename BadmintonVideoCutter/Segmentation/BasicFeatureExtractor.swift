@@ -600,7 +600,8 @@ final class BasicFeatureExtractor: FeatureExtractor {
             return FeatureFrame(
                 timestamp: frame.timestamp,
                 motionScore: frame.motionScore,
-                audioScore: audioScore
+                audioScore: audioScore,
+                shuttlecockFlightScore: frame.shuttlecockFlightScore
             )
         }
     }
