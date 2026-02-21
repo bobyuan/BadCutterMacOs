@@ -225,6 +225,12 @@ struct ConfidenceGraphView: View {
                 }
                 .stroke(Color.orange.opacity(0.7), lineWidth: 1.5)
 
+                // Shuttlecock flight line (green)
+                Path { path in
+                    drawLine(path: &path, keyPath: \.shuttlecockFlightScore, width: width, height: height, color: .green)
+                }
+                .stroke(Color.green.opacity(0.7), lineWidth: 1.5)
+
                 // Playhead
                 let px = timeToX(playheadTime, width: width)
                 Rectangle()
@@ -241,6 +247,10 @@ struct ConfidenceGraphView: View {
                     HStack(spacing: 3) {
                         RoundedRectangle(cornerRadius: 1).fill(.orange.opacity(0.7)).frame(width: 12, height: 2)
                         Text("Audio").font(.caption2)
+                    }
+                    HStack(spacing: 3) {
+                        RoundedRectangle(cornerRadius: 1).fill(.green.opacity(0.7)).frame(width: 12, height: 2)
+                        Text("Shuttle").font(.caption2)
                     }
                 }
                 .padding(4)

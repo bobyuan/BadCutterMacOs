@@ -70,14 +70,15 @@ enum SensitivityPreset: String, CaseIterable, Codable, Identifiable {
 
 struct AnalysisConfig: Codable {
     var minRallyDuration: TimeInterval = 1.0
-    var minBetweenPointsDuration: TimeInterval = 1.5
-    var flipHysteresisSeconds: TimeInterval = 1.0
+    var minBetweenPointsDuration: TimeInterval = 3.0
+    var flipHysteresisSeconds: TimeInterval = 1.5
     var rallyPercentile: Double = 0.68
     var motionWeight: Double = 0.90
     var audioWeight: Double = 0.10
-    var preRollSeconds: TimeInterval = 1.5
+    var preRollSeconds: TimeInterval = 2.5
+    var postRollSeconds: TimeInterval = 1.5
     var maxExpectedRallyDuration: TimeInterval = 25.0
-    var minDipDuration: TimeInterval = 1.5
+    var minDipDuration: TimeInterval = 3.0
 }
 
 // MARK: - Point Review & Game Structure

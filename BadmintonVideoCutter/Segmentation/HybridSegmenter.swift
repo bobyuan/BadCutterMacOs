@@ -49,7 +49,8 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
             return true
         }
         let preRolled = applyPreRoll(segments: filtered, preRoll: config.preRollSeconds)
-        return splitLongRallies(segments: preRolled, frames: frames, config: config)
+        let postRolled = applyPostRoll(segments: preRolled, postRoll: config.postRollSeconds)
+        return splitLongRallies(segments: postRolled, frames: frames, config: config)
     }
 
     // MARK: - Rally Splitting
@@ -241,6 +242,58 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         }
 
         // Merge consecutive rally segments that became adjacent after removing gaps
+        guard !filtered.isEmpty else { return filtered }
+        var merged: [TimeSegment] = [filtered[0]]
+        for seg in filtered.dropFirst() {
+            if seg.label == .rally && merged.last!.label == .rally {
+                merged[merged.count - 1].end = seg.end
+                merged[merged.count - 1].confidence = max(merged[merged.count - 1].confidence, seg.confidence)
+            } else {
+                merged.append(seg)
+            }
+        }
+        return merged
+    }
+
+    // MARK: - Post-Roll
+
+    /// Extends each rally segment's end forward by `postRoll` seconds
+    /// to capture the birdie landing after the last hit. In badminton,
+    /// a player may stop moving 1-3 seconds before the point actually ends
+    /// (they know they can't reach the bird). Post-roll prevents cutting
+    /// the point short.
+    private func applyPostRoll(segments: [TimeSegment], postRoll: TimeInterval) -> [TimeSegment] {
+        guard postRoll > 0, !segments.isEmpty else { return segments }
+
+        var result = segments
+        for i in 0..<result.count {
+            guard result[i].label == .rally else { continue }
+
+            // Don't push end past the next rally's start
+            let ceiling: TimeInterval
+            if i + 1 < result.count && result[i + 1].label == .rally {
+                ceiling = result[i + 1].start
+            } else {
+                ceiling = .greatestFiniteMagnitude
+            }
+
+            let newEnd = min(ceiling, result[i].end + postRoll)
+            let stolen = newEnd - result[i].end
+            result[i].end = newEnd
+
+            // Shrink the following between-points segment if it exists
+            if i + 1 < result.count && result[i + 1].label == .betweenPoints {
+                result[i + 1].start += stolen
+            }
+        }
+
+        // Remove between-points segments that shrank below 1.0s
+        let filtered = result.filter {
+            if $0.label == .betweenPoints { return $0.duration >= 1.0 }
+            return $0.duration > 0
+        }
+
+        // Merge consecutive rally segments that became adjacent
         guard !filtered.isEmpty else { return filtered }
         var merged: [TimeSegment] = [filtered[0]]
         for seg in filtered.dropFirst() {

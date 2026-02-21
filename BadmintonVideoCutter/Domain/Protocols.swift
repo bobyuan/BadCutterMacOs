@@ -20,4 +20,7 @@ struct FeatureFrame: Sendable {
     var timestamp: TimeInterval
     var motionScore: Double
     var audioScore: Double
+    /// Shuttlecock in-flight confidence (0 = not detected, 1 = fast flight confirmed).
+    /// Based on velocity-tracked blob detection across consecutive frames.
+    var shuttlecockFlightScore: Double = 0
 }
