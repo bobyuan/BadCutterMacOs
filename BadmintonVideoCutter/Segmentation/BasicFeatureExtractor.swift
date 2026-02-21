@@ -326,41 +326,66 @@ final class BasicFeatureExtractor: FeatureExtractor {
         //   - Position B gains white pixels → "arrived" cluster at B
         //   - Displacement A→B = shuttlecock velocity
         //
-        // During rallies: shuttlecock creates large, well-separated arrived/departed clusters
-        //   (50-200 displaced pixels each, 50-400px apart at 960px resolution)
-        // During breaks: player clothing creates small, nearby arrived/departed clusters
-        //   (5-20 pixels each, 5-30px apart)
+        // Key insight: the shuttlecock travels the FARTHEST of any white object.
+        // Shoes create dense clusters but move short distances (20-60px).
+        // The shuttlecock is smaller but crosses the court (80-400px at 960px).
         //
-        // We find the densest cluster in each grid and measure the displacement.
-        // Minimum cluster size (25 pixels) filters out player clothing noise.
+        // Algorithm:
+        // 1. Find top-N clusters in each grid (not just the densest)
+        // 2. For each arrived cluster, find its nearest departed cluster
+        // 3. The arrived cluster with the LARGEST nearest-departed distance = shuttlecock
+        //    (it traveled the farthest from where it was)
         let resolutionScale = Double(width) / 960.0
-        let minClusterPixels = max(15, Int(25.0 * resolutionScale * resolutionScale))
+        let minClusterPixels = max(8, Int(12.0 * resolutionScale * resolutionScale))
 
-        let arrivedCluster = findPeakCluster(in: arrivedGrid, gridW: gridW, gridH: gridH,
-                                              cellSize: cellSize, startRow: startRow,
-                                              minPixels: minClusterPixels)
-        let departedCluster = findPeakCluster(in: departedGrid, gridW: gridW, gridH: gridH,
+        let arrivedClusters = findTopClusters(in: arrivedGrid, gridW: gridW, gridH: gridH,
                                                cellSize: cellSize, startRow: startRow,
-                                               minPixels: minClusterPixels)
+                                               minPixels: minClusterPixels, maxClusters: 5)
+        let departedClusters = findTopClusters(in: departedGrid, gridW: gridW, gridH: gridH,
+                                                cellSize: cellSize, startRow: startRow,
+                                                minPixels: minClusterPixels, maxClusters: 5)
 
-        let maxClusterSum = max(arrivedCluster?.pixels ?? 0, departedCluster?.pixels ?? 0)
+        let maxClusterSum = max(
+            arrivedClusters.first?.pixels ?? 0,
+            departedClusters.first?.pixels ?? 0
+        )
 
-        // Compute displacement between arrived and departed clusters
+        // For each arrived cluster, find its nearest departed cluster.
+        // The pair with the LARGEST nearest-departed distance = shuttlecock.
+        // Shoes move short distances (nearest departed is close by).
+        // The shuttlecock moves far (nearest departed is its old position, far away).
         var shuttlecockVelocity: Double = 0
-        if let arr = arrivedCluster, let dep = departedCluster {
-            let dx = arr.x - dep.x
-            let dy = arr.y - dep.y
-            shuttlecockVelocity = sqrt(dx * dx + dy * dy)
+        var bestArrivedCluster: (x: Double, y: Double, pixels: Int)? = nil
+
+        if !departedClusters.isEmpty {
+            for arr in arrivedClusters {
+                // Find nearest departed cluster to this arrived cluster
+                var nearestDist = Double.greatestFiniteMagnitude
+                for dep in departedClusters {
+                    let dx = arr.x - dep.x
+                    let dy = arr.y - dep.y
+                    let dist = sqrt(dx * dx + dy * dy)
+                    if dist < nearestDist {
+                        nearestDist = dist
+                    }
+                }
+
+                // The arrived cluster whose nearest departed is farthest = shuttlecock
+                if nearestDist > shuttlecockVelocity && nearestDist < Double.greatestFiniteMagnitude {
+                    shuttlecockVelocity = nearestDist
+                    bestArrivedCluster = arr
+                }
+            }
         }
 
         // Map velocity to flight score.
         // At 960px, 200ms between frames:
-        //   Player movement: 5-30px displacement → below threshold
-        //   Slow net shot: 40-80px
-        //   Moderate rally: 80-200px
-        //   Fast smash: 200-400px
-        let minFlightSpeed = 40.0 * resolutionScale
-        let fullFlightSpeed = 150.0 * resolutionScale
+        //   Shoe/player movement: nearest departed is 10-50px away
+        //   Slow net shot: 60-100px
+        //   Moderate rally: 100-250px
+        //   Fast smash: 250-400px
+        let minFlightSpeed = 60.0 * resolutionScale    // Higher: filter out shoe movement
+        let fullFlightSpeed = 180.0 * resolutionScale
         let maxReasonableSpeed = 500.0 * resolutionScale
 
         let rawFlightScore: Double
@@ -445,9 +470,10 @@ final class BasicFeatureExtractor: FeatureExtractor {
             ))
         }
 
-        // Normalize shuttlecock position to 0-1 range (relative to full frame)
+        // Normalize shuttlecock position to 0-1 range (relative to full frame).
+        // Uses the arrived cluster with the largest travel distance (= shuttlecock).
         let shuttlecockPos: (x: Double, y: Double)?
-        if let arr = arrivedCluster, rawFlightScore > 0 {
+        if let arr = bestArrivedCluster, rawFlightScore > 0 {
             shuttlecockPos = (x: arr.x / Double(width), y: arr.y / Double(height))
         } else {
             shuttlecockPos = nil
@@ -458,44 +484,56 @@ final class BasicFeatureExtractor: FeatureExtractor {
 
     // MARK: - Cluster Detection
 
-    /// Find the densest cluster of displaced white pixels in a grid.
-    /// Returns the weighted centroid and total pixel count of a 3x3 neighborhood
-    /// around the peak cell, or nil if below the minimum pixel threshold.
-    private func findPeakCluster(in grid: [Int], gridW: Int, gridH: Int,
+    /// Find the top-N clusters of displaced white pixels in a grid.
+    /// Returns clusters sorted by density (most pixels first).
+    /// Each cluster is a 3x3 neighborhood around a peak cell.
+    /// Clusters don't overlap (cells are marked as used after each extraction).
+    private func findTopClusters(in grid: [Int], gridW: Int, gridH: Int,
                                   cellSize: Int, startRow: Int,
-                                  minPixels: Int) -> (x: Double, y: Double, pixels: Int)? {
-        // Find cell with highest count
-        var maxCount = 0
-        var maxGX = 0, maxGY = 0
-        for gy in 0..<gridH {
-            for gx in 0..<gridW {
-                let c = grid[gy * gridW + gx]
-                if c > maxCount {
-                    maxCount = c
-                    maxGX = gx
-                    maxGY = gy
+                                  minPixels: Int, maxClusters: Int) -> [(x: Double, y: Double, pixels: Int)] {
+        var result: [(x: Double, y: Double, pixels: Int)] = []
+        var usedCells = Set<Int>()
+
+        for _ in 0..<maxClusters {
+            // Find highest unused cell
+            var maxCount = 0
+            var maxGX = 0, maxGY = 0
+            for gy in 0..<gridH {
+                for gx in 0..<gridW {
+                    let idx = gy * gridW + gx
+                    guard !usedCells.contains(idx) else { continue }
+                    let c = grid[idx]
+                    if c > maxCount {
+                        maxCount = c
+                        maxGX = gx
+                        maxGY = gy
+                    }
                 }
             }
-        }
-        guard maxCount > 0 else { return nil }
+            guard maxCount > 0 else { break }
 
-        // Compute weighted centroid from 3x3 neighborhood around peak
-        var totalPixels = 0
-        var wX = 0.0, wY = 0.0, wTotal = 0.0
-        for dy in -1...1 {
-            for dx in -1...1 {
-                let gx = maxGX + dx, gy = maxGY + dy
-                guard gx >= 0 && gx < gridW && gy >= 0 && gy < gridH else { continue }
-                let w = Double(grid[gy * gridW + gx])
-                totalPixels += grid[gy * gridW + gx]
-                wX += Double(gx * cellSize + cellSize / 2) * w
-                wY += Double(gy * cellSize + cellSize / 2 + startRow) * w
-                wTotal += w
+            // Compute weighted centroid from 3x3 neighborhood and mark as used
+            var totalPixels = 0
+            var wX = 0.0, wY = 0.0, wTotal = 0.0
+            for dy in -1...1 {
+                for dx in -1...1 {
+                    let gx = maxGX + dx, gy = maxGY + dy
+                    guard gx >= 0 && gx < gridW && gy >= 0 && gy < gridH else { continue }
+                    let idx = gy * gridW + gx
+                    usedCells.insert(idx)
+                    let w = Double(grid[idx])
+                    totalPixels += grid[idx]
+                    wX += Double(gx * cellSize + cellSize / 2) * w
+                    wY += Double(gy * cellSize + cellSize / 2 + startRow) * w
+                    wTotal += w
+                }
             }
+
+            guard totalPixels >= minPixels && wTotal > 0 else { continue }
+            result.append((x: wX / wTotal, y: wY / wTotal, pixels: totalPixels))
         }
 
-        guard totalPixels >= minPixels && wTotal > 0 else { return nil }
-        return (x: wX / wTotal, y: wY / wTotal, pixels: totalPixels)
+        return result
     }
 
     // MARK: - Vision Person Detection

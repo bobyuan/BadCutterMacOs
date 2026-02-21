@@ -20,13 +20,6 @@ struct TimelineTabView: View {
                             .frame(minHeight: 280)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                        // Red overlay when playhead is in a trim (removed) segment
-                        if isInTrimZone {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.red.opacity(0.25))
-                                .allowsHitTesting(false)
-                        }
-
                         // Shuttlecock detection overlay: shows a rectangle at
                         // the detected position so the user can verify accuracy
                         if let pos = shuttlecockPositionAtPlayhead {
@@ -41,6 +34,12 @@ struct TimelineTabView: View {
                             .allowsHitTesting(false)
                         }
                     }
+                    // Red border when playhead is in a trim (removed) segment
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.red, lineWidth: isInTrimZone ? 3 : 0)
+                            .allowsHitTesting(false)
+                    )
                     .onAppear { setupTimeObserver(player) }
                     .onDisappear { removeTimeObserver(player) }
                 } else {
