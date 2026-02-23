@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AnalysisTabView: View {
     @ObservedObject var appState: AppState
+    @State private var showCalibration = false
 
     var body: some View {
         HSplitView {
@@ -21,18 +22,37 @@ struct AnalysisTabView: View {
             .padding(24)
             .frame(minWidth: 320)
 
-            // Right: Progress + results
-            VStack(spacing: 16) {
-                if appState.isAnalyzing {
-                    progressView
-                } else if !appState.segments.isEmpty {
-                    resultsView
-                } else {
-                    placeholderView
+            // Right: Progress + results or calibration
+            if showCalibration {
+                VStack(spacing: 0) {
+                    // Toggle bar
+                    HStack {
+                        Button("Results") { showCalibration = false }
+                            .buttonStyle(.bordered)
+                        Button("Calibration") { }
+                            .buttonStyle(.borderedProminent)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+
+                    CalibrationView(appState: appState)
                 }
+                .frame(minWidth: 400)
+            } else {
+                VStack(spacing: 16) {
+                    if appState.isAnalyzing {
+                        progressView
+                    } else if !appState.segments.isEmpty {
+                        resultsView
+                    } else {
+                        placeholderView
+                    }
+                }
+                .padding(24)
+                .frame(minWidth: 400)
             }
-            .padding(24)
-            .frame(minWidth: 400)
         }
     }
 
@@ -71,6 +91,16 @@ struct AnalysisTabView: View {
                 }
                 .font(.callout)
                 .padding(.vertical, 4)
+            }
+
+            // ML Shuttlecock Detection status
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(appState.hasShuttlecockModel ? Color.green : Color.gray.opacity(0.5))
+                    .frame(width: 8, height: 8)
+                Text(appState.hasShuttlecockModel ? "ML Shuttlecock Detection: Active" : "ML Model Not Found")
+                    .font(.caption)
+                    .foregroundStyle(appState.hasShuttlecockModel ? .primary : .secondary)
             }
 
             Button(action: { appState.analyzeCurrentVideo() }) {
@@ -258,6 +288,21 @@ struct AnalysisTabView: View {
             }
 
             miniTimeline
+
+            Button(action: {
+                if appState.calibrationFrames.isEmpty {
+                    appState.generateCalibrationFrames()
+                }
+                showCalibration = true
+            }) {
+                HStack {
+                    Image(systemName: "target")
+                    Text("Calibrate Shuttlecock")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
 
             Spacer()
         }

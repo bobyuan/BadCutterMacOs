@@ -20,16 +20,25 @@ struct TimelineTabView: View {
                             .frame(minHeight: 280)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                        // Shuttlecock detection overlay: shows a rectangle at
-                        // the detected position so the user can verify accuracy
+                        // Shuttlecock detection overlay: two concentric circles
+                        // Big circle (border only) for easy visibility
+                        // Small circle (solid fill) for precise detection point
                         if let pos = shuttlecockPositionAtPlayhead {
                             GeometryReader { geo in
-                                let boxSize: CGFloat = 40
-                                Rectangle()
-                                    .stroke(Color.green, lineWidth: 2)
-                                    .frame(width: boxSize, height: boxSize)
-                                    .position(x: CGFloat(pos.x) * geo.size.width,
-                                              y: CGFloat(pos.y) * geo.size.height)
+                                let cx = CGFloat(pos.x) * geo.size.width
+                                let cy = CGFloat(pos.y) * geo.size.height
+
+                                // Big circle — green border, easy to spot
+                                Circle()
+                                    .stroke(Color.green, lineWidth: 2.5)
+                                    .frame(width: 60, height: 60)
+                                    .position(x: cx, y: cy)
+
+                                // Small circle — solid green, detection point
+                                Circle()
+                                    .fill(Color.green)
+                                    .frame(width: 8, height: 8)
+                                    .position(x: cx, y: cy)
                             }
                             .allowsHitTesting(false)
                         }

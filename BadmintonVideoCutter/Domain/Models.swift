@@ -334,6 +334,33 @@ struct ExportConfig {
     var matchSourceFormat: Bool = true
 }
 
+// MARK: - Shuttlecock Calibration
+
+enum CalibrationStatus: String, Codable, CaseIterable {
+    case unlabeled
+    case labeled      // User placed rectangle on shuttlecock
+    case notVisible   // User confirmed bird is not visible in this frame
+}
+
+struct CalibrationFrame: Identifiable, Codable {
+    let id: UUID
+    var timestamp: TimeInterval
+    var status: CalibrationStatus
+    /// Normalized 0-1 position of shuttlecock center (nil if not labeled)
+    var shuttlecockPosition: CGPoint?
+    /// Normalized 0-1 size of the bounding box
+    var boxSize: CGSize
+
+    init(id: UUID = UUID(), timestamp: TimeInterval,
+         boxSize: CGSize = CGSize(width: 0.017, height: 0.017)) {
+        self.id = id
+        self.timestamp = timestamp
+        self.status = .unlabeled
+        self.shuttlecockPosition = nil
+        self.boxSize = boxSize
+    }
+}
+
 // MARK: - Timeline Viewport
 
 struct TimelineViewport {

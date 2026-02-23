@@ -23,15 +23,30 @@ final class BasicFeatureExtractor: FeatureExtractor {
         var onVideoProgress: @MainActor (Double) -> Void
     }
 
+    /// Calibration priors: normalized (0-1) positions of the shuttlecock at known timestamps.
+    /// Used to learn shuttlecock appearance and bias cluster selection.
+    struct CalibrationPrior {
+        var timestamp: TimeInterval
+        var position: CGPoint  // normalized 0-1
+    }
+
+    /// Learned shuttlecock appearance from calibration data.
+    /// Overrides hardcoded detection thresholds with video-specific values.
+    struct ShuttlecockProfile {
+        var luminanceThreshold: Int    // min brightness to count as "shuttlecock-like"
+        var saturationThreshold: Int   // max saturation
+        var medianLuminance: Int       // typical brightness of the bird
+    }
+
     func extractFeatures(from videoURL: URL) async throws -> [FeatureFrame] {
         return try await extractFeatures(from: videoURL, mlModelURL: nil, progress: nil)
     }
 
-    func extractFeatures(from videoURL: URL, mlModelURL: URL? = nil, progress: ProgressCallbacks?) async throws -> [FeatureFrame] {
+    func extractFeatures(from videoURL: URL, mlModelURL: URL? = nil, progress: ProgressCallbacks?, calibrationPriors: [CalibrationPrior] = [], shuttlecockModelURL: URL? = nil) async throws -> [FeatureFrame] {
         let asset = AVURLAsset(url: videoURL)
         let totalDuration = try await asset.load(.duration).seconds
 
-        async let videoFrames = extractVideoFeatures(from: videoURL, totalDuration: totalDuration, progress: progress)
+        async let videoFrames = extractVideoFeatures(from: videoURL, totalDuration: totalDuration, progress: progress, calibrationPriors: calibrationPriors, shuttlecockModelURL: shuttlecockModelURL)
         async let audioFeatures = audioAnalyzer.analyzeAudio(from: videoURL, mlModelURL: mlModelURL) { fraction in
             Task { @MainActor in
                 progress?.onAudioProgress(fraction)
@@ -60,7 +75,7 @@ final class BasicFeatureExtractor: FeatureExtractor {
 
     // MARK: - Video Feature Extraction
 
-    private func extractVideoFeatures(from videoURL: URL, totalDuration: TimeInterval, progress: ProgressCallbacks?) async throws -> [FeatureFrame] {
+    private func extractVideoFeatures(from videoURL: URL, totalDuration: TimeInterval, progress: ProgressCallbacks?, calibrationPriors: [CalibrationPrior] = [], shuttlecockModelURL: URL? = nil) async throws -> [FeatureFrame] {
         let asset = AVURLAsset(url: videoURL)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             return []
@@ -89,10 +104,36 @@ final class BasicFeatureExtractor: FeatureExtractor {
         var lastReportedProgress: Double = -1
         let progressReportInterval: Double = 0.02
 
+        // Profile shuttlecock appearance from calibration data (if available)
+        let shuttlecockProfile: ShuttlecockProfile?
+        if !calibrationPriors.isEmpty {
+            shuttlecockProfile = profileShuttlecock(videoURL: videoURL, priors: calibrationPriors,
+                                                     width: analysisWidth, height: analysisHeight)
+        } else {
+            shuttlecockProfile = nil
+        }
+
+        // Initialize ML shuttlecock detector if model is available
+        var shuttlecockDetector: ShuttlecockDetector?
+        if let modelURL = shuttlecockModelURL {
+            do {
+                shuttlecockDetector = try ShuttlecockDetector(modelURL: modelURL)
+                print("ML shuttlecock detector initialized")
+            } catch {
+                print("Failed to load shuttlecock ML model: \(error). Falling back to blob detection.")
+                shuttlecockDetector = nil
+            }
+        }
+        let useMLDetector = shuttlecockDetector != nil
+
         diagnostics = []
         lastPersonCount = 0
         personDetectionCounter = 0
         flightScoreEMA = 0
+
+        // When using ML detector, we need to buffer pending frames
+        // because the detector returns results in batches of seqLen (3).
+        var pendingFrameIndices: [(index: Int, timestamp: TimeInterval)] = []
 
         reader.startReading()
         while reader.status == .reading {
@@ -114,15 +155,53 @@ final class BasicFeatureExtractor: FeatureExtractor {
                 continue
             }
 
+            // Compute motion scores (always needed for blended motion score)
+            let priorHint: CGPoint? = nearestCalibrationPrior(at: timestamp, priors: calibrationPriors)
             let scores: (motion: Double, shuttlecockFlight: Double, shuttlecockPos: (x: Double, y: Double)?)
             if let prev = previousRGBA {
-                scores = computeMotionScore(prev, currentRGBA, width: analysisWidth, height: analysisHeight, timestamp: timestamp, personCount: lastPersonCount)
+                scores = computeMotionScore(prev, currentRGBA, width: analysisWidth, height: analysisHeight, timestamp: timestamp, personCount: lastPersonCount, calibrationHint: priorHint, profile: shuttlecockProfile)
             } else {
                 scores = (motion: 0, shuttlecockFlight: 0, shuttlecockPos: nil)
             }
             previousRGBA = currentRGBA
 
-            frames.append(FeatureFrame(timestamp: timestamp, motionScore: scores.motion, audioScore: 0.0, shuttlecockFlightScore: scores.shuttlecockFlight, shuttlecockPosition: scores.shuttlecockPos))
+            if useMLDetector, let detector = shuttlecockDetector {
+                // Use ML detector for shuttlecock — blob results used only for motion score
+                let frameIdx = frames.count
+                frames.append(FeatureFrame(
+                    timestamp: timestamp,
+                    motionScore: scores.motion,
+                    audioScore: 0.0,
+                    shuttlecockFlightScore: 0,
+                    shuttlecockPosition: nil
+                ))
+                pendingFrameIndices.append((index: frameIdx, timestamp: timestamp))
+
+                // Feed frame to ML detector
+                if let detections = detector.processFrame(rgba: currentRGBA, width: analysisWidth, height: analysisHeight, timestamp: timestamp) {
+                    // Assign ML-detected positions to their corresponding FeatureFrames
+                    for detection in detections {
+                        if let pendingIdx = pendingFrameIndices.first(where: { abs($0.timestamp - detection.timestamp) < 0.01 }) {
+                            frames[pendingIdx.index].shuttlecockPosition = detection.position
+                            frames[pendingIdx.index].shuttlecockFlightScore = detection.confidence
+                        }
+                    }
+                    // Remove assigned pending frames
+                    let assignedTimestamps = Set(detections.map(\.timestamp))
+                    pendingFrameIndices.removeAll { pending in
+                        assignedTimestamps.contains(where: { abs($0 - pending.timestamp) < 0.01 })
+                    }
+                }
+            } else {
+                // Fallback: use blob detection for shuttlecock
+                frames.append(FeatureFrame(
+                    timestamp: timestamp,
+                    motionScore: scores.motion,
+                    audioScore: 0.0,
+                    shuttlecockFlightScore: scores.shuttlecockFlight,
+                    shuttlecockPosition: scores.shuttlecockPos
+                ))
+            }
 
             if totalDuration > 0 {
                 let pct = min(timestamp / totalDuration, 1.0)
@@ -132,6 +211,16 @@ final class BasicFeatureExtractor: FeatureExtractor {
                     await MainActor.run {
                         progress?.onVideoProgress(p)
                     }
+                }
+            }
+        }
+
+        // Flush remaining ML detector buffer
+        if let detector = shuttlecockDetector, let detections = detector.flush() {
+            for detection in detections {
+                if let pendingIdx = pendingFrameIndices.first(where: { abs($0.timestamp - detection.timestamp) < 0.01 }) {
+                    frames[pendingIdx.index].shuttlecockPosition = detection.position
+                    frames[pendingIdx.index].shuttlecockFlightScore = detection.confidence
                 }
             }
         }
@@ -199,6 +288,122 @@ final class BasicFeatureExtractor: FeatureExtractor {
         return frames
     }
 
+    // MARK: - Calibration Profiling
+
+    /// Sample pixel values at each calibrated shuttlecock position to learn
+    /// what the bird actually looks like in this video (brightness, color).
+    /// Returns a ShuttlecockProfile with video-specific thresholds.
+    private func profileShuttlecock(videoURL: URL, priors: [CalibrationPrior],
+                                     width: Int, height: Int) -> ShuttlecockProfile? {
+        guard !priors.isEmpty else { return nil }
+
+        let asset = AVURLAsset(url: videoURL)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: CGFloat(width), height: CGFloat(height))
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.05, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.05, preferredTimescale: 600)
+
+        var luminances: [Int] = []
+        var saturations: [Int] = []
+
+        for prior in priors {
+            let cmTime = CMTime(seconds: prior.timestamp, preferredTimescale: 600)
+            guard let cgImage = try? generator.copyCGImage(at: cmTime, actualTime: nil) else { continue }
+
+            // Render to RGBA at analysis resolution
+            var rgba = [UInt8](repeating: 0, count: width * height * 4)
+            guard let context = CGContext(
+                data: &rgba, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { continue }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+            // Sample a small patch around the labeled position (5x5 pixels)
+            let cx = Int(Double(prior.position.x) * Double(width))
+            let cy = Int(Double(prior.position.y) * Double(height))
+            let patchRadius = 4
+
+            for dy in -patchRadius...patchRadius {
+                for dx in -patchRadius...patchRadius {
+                    let px = max(0, min(width - 1, cx + dx))
+                    let py = max(0, min(height - 1, cy + dy))
+                    let idx = (py * width + px) * 4
+                    let r = Int(rgba[idx])
+                    let g = Int(rgba[idx + 1])
+                    let b = Int(rgba[idx + 2])
+                    let lum = (r * 77 + g * 150 + b * 29) >> 8
+                    let sat = max(r, max(g, b)) - min(r, min(g, b))
+                    luminances.append(lum)
+                    saturations.append(sat)
+                }
+            }
+        }
+
+        guard !luminances.isEmpty else { return nil }
+
+        let sortedLum = luminances.sorted()
+        let sortedSat = saturations.sorted()
+        let medianLum = sortedLum[sortedLum.count / 2]
+        let p90Sat = sortedSat[min(sortedSat.count - 1, Int(Double(sortedSat.count) * 0.9))]
+
+        // Set threshold to capture most of the bird: p10 luminance - margin
+        let p10Lum = sortedLum[max(0, Int(Double(sortedLum.count) * 0.10))]
+        let lumThreshold = max(80, p10Lum - 20)
+        let satThreshold = max(60, p90Sat + 20)
+
+        print("Calibration profile: medianLum=\(medianLum), lumThreshold=\(lumThreshold), satThreshold=\(satThreshold) (from \(priors.count) labeled frames)")
+
+        return ShuttlecockProfile(
+            luminanceThreshold: lumThreshold,
+            saturationThreshold: satThreshold,
+            medianLuminance: medianLum
+        )
+    }
+
+    // MARK: - Calibration Prior Lookup
+
+    /// Find the nearest calibration prior within 5 seconds of the given timestamp.
+    /// Interpolates between the two nearest priors if the frame falls between them.
+    private func nearestCalibrationPrior(at timestamp: TimeInterval, priors: [CalibrationPrior]) -> CGPoint? {
+        guard !priors.isEmpty else { return nil }
+
+        // Find the closest prior by timestamp
+        var bestDist = Double.greatestFiniteMagnitude
+        var bestIdx = 0
+        for (i, p) in priors.enumerated() {
+            let d = abs(p.timestamp - timestamp)
+            if d < bestDist {
+                bestDist = d
+                bestIdx = i
+            }
+        }
+
+        // Only use if within 5 seconds
+        guard bestDist <= 5.0 else { return nil }
+
+        // Try to interpolate between two bracketing priors
+        let sorted = priors.sorted { $0.timestamp < $1.timestamp }
+        var before: CalibrationPrior?
+        var after: CalibrationPrior?
+        for p in sorted {
+            if p.timestamp <= timestamp { before = p }
+            if p.timestamp >= timestamp && after == nil { after = p }
+        }
+
+        if let b = before, let a = after, a.timestamp != b.timestamp {
+            let t = (timestamp - b.timestamp) / (a.timestamp - b.timestamp)
+            return CGPoint(
+                x: b.position.x + (a.position.x - b.position.x) * t,
+                y: b.position.y + (a.position.y - b.position.y) * t
+            )
+        }
+
+        return priors[bestIdx].position
+    }
+
     // MARK: - Motion Detection (Shuttlecock Blob Detection + General Motion)
 
     struct MotionDiagnostics {
@@ -217,35 +422,28 @@ final class BasicFeatureExtractor: FeatureExtractor {
     var collectDiagnostics = false
     private(set) var diagnostics: [MotionDiagnostics] = []
 
-    /// Detect shuttlecock movement using spatially-clustered white-pixel displacement
-    /// at dynamic resolution, combined with general frame differencing.
+    /// Detect shuttlecock via motion-based small-blob detection.
+    /// Instead of filtering by color (white pixels), this detects ALL moving pixels,
+    /// clusters them, then selects the smallest+fastest blob as the shuttlecock.
     ///
-    /// At half-native resolution (e.g., 960x540 for 1080p video), the shuttlecock is
-    /// ~20-30px diameter — large enough to form a distinct blob of displaced white pixels.
-    /// A grid-based spatial filter finds the densest concentration of displaced white pixels,
-    /// distinguishing the compact shuttlecock from scattered noise (player clothing, etc.).
+    /// Key insight: players are large slow blobs; the shuttlecock is a tiny fast blob.
+    /// Scoring: speed / sqrt(size) — small fast objects score highest.
+    ///
     /// Returns (blendedMotionScore, shuttlecockFlightScore, shuttlecockPosition)
-    private func computeMotionScore(_ prevRGBA: [UInt8], _ currRGBA: [UInt8], width: Int, height: Int, timestamp: TimeInterval = 0, personCount: Int = 0) -> (motion: Double, shuttlecockFlight: Double, shuttlecockPos: (x: Double, y: Double)?) {
+    private func computeMotionScore(_ prevRGBA: [UInt8], _ currRGBA: [UInt8], width: Int, height: Int, timestamp: TimeInterval = 0, personCount: Int = 0, calibrationHint: CGPoint? = nil, profile: ShuttlecockProfile? = nil) -> (motion: Double, shuttlecockFlight: Double, shuttlecockPos: (x: Double, y: Double)?) {
         // Skip top 20% (ceiling/lights in indoor courts)
         let startRow = height / 5
-        let noiseThreshold: Int = 12
-        let luminanceThreshold: Int = 200
-        let saturationThreshold: Int = 50
+        let noiseThreshold: Int = 15
 
-        // Two grids for shuttlecock arrival/departure detection.
-        // Within a single frame-pair, white pixels that APPEARED indicate the
-        // shuttlecock's new position; white pixels that DISAPPEARED indicate
-        // its old position. The displacement between these two clusters = velocity.
-        // This avoids the false-positive problem of cross-frame blob matching.
-        let cellSize = 16
+        // Fine grid for shuttlecock detection: track all motion, not just white pixels.
+        // cellSize=8 → 3x3 cluster = 24x24px. Shuttlecock is ~10-20px at 960px.
+        let cellSize = 8
         let gridW = (width + cellSize - 1) / cellSize
         let gridH = ((height - startRow) + cellSize - 1) / cellSize
-        var arrivedGrid = [Int](repeating: 0, count: gridW * gridH)
-        var departedGrid = [Int](repeating: 0, count: gridW * gridH)
+        var motionGrid = [Int](repeating: 0, count: gridW * gridH)      // moving pixel count
+        var intensityGrid = [Double](repeating: 0, count: gridW * gridH) // sum of motion intensity
 
         // Coarse grid for multi-region motion spread (rally vs break detection)
-        // During rallies, 3-4 players move simultaneously across the court → many active regions.
-        // During breaks, 0-1 people move → few active regions.
         let spreadCols = 6
         let spreadRows = 4
         let spreadCellW = max(1, width / spreadCols)
@@ -254,7 +452,6 @@ final class BasicFeatureExtractor: FeatureExtractor {
         var spreadMoving = [Int](repeating: 0, count: spreadCellCount)
         var spreadTotal = [Int](repeating: 0, count: spreadCellCount)
 
-        var totalDisplacedWhite = 0
         var movingPixels = 0
         var totalDiff: Int = 0
         var regionPixels = 0
@@ -270,48 +467,33 @@ final class BasicFeatureExtractor: FeatureExtractor {
                 let sCol = min(x / spreadCellW, spreadCols - 1)
                 let sIdx = sRow * spreadCols + sCol
 
-                // Current pixel RGB
                 let cR = Int(currRGBA[rgbaIdx])
                 let cG = Int(currRGBA[rgbaIdx + 1])
                 let cB = Int(currRGBA[rgbaIdx + 2])
-
-                // Previous pixel RGB
                 let pR = Int(prevRGBA[rgbaIdx])
                 let pG = Int(prevRGBA[rgbaIdx + 1])
                 let pB = Int(prevRGBA[rgbaIdx + 2])
 
-                // Luminance (ITU-R BT.601)
+                // Per-channel diff (more sensitive than luminance-only)
+                let diff = abs(cR - pR) + abs(cG - pG) + abs(cB - pB)
+
+                regionPixels += 1
+                spreadTotal[sIdx] += 1
+
                 let currLum = (cR * 77 + cG * 150 + cB * 29) >> 8
                 let prevLum = (pR * 77 + pG * 150 + pB * 29) >> 8
+                let lumDiff = abs(currLum - prevLum)
 
-                // White detection: high luminance + low saturation
-                let currMaxCh = max(cR, max(cG, cB))
-                let currMinCh = min(cR, min(cG, cB))
-                let currIsWhite = currLum > luminanceThreshold && (currMaxCh - currMinCh) < saturationThreshold
-
-                let prevMaxCh = max(pR, max(pG, pB))
-                let prevMinCh = min(pR, min(pG, pB))
-                let prevIsWhite = prevLum > luminanceThreshold && (prevMaxCh - prevMinCh) < saturationThreshold
-
-                // Separate arrived (new white) and departed (lost white) pixels.
-                // Arrived = shuttlecock's new position. Departed = old position.
-                // Static white (court lines) contributes 0 to both grids.
-                if gridY < gridH && gridX < gridW {
-                    if currIsWhite && !prevIsWhite {
-                        arrivedGrid[gridY * gridW + gridX] += 1
-                        totalDisplacedWhite += 1
-                    }
-                    if prevIsWhite && !currIsWhite {
-                        departedGrid[gridY * gridW + gridX] += 1
-                        totalDisplacedWhite += 1
+                if diff > noiseThreshold * 2 {
+                    // This pixel changed between frames (RGB sum diff > 30)
+                    if gridY < gridH && gridX < gridW {
+                        let gi = gridY * gridW + gridX
+                        motionGrid[gi] += 1
+                        intensityGrid[gi] += Double(diff)
                     }
                 }
 
-                // General motion (luminance-based frame differencing)
-                regionPixels += 1
-                spreadTotal[sIdx] += 1
-                let lumDiff = abs(currLum - prevLum)
-                if lumDiff > noiseThreshold {
+                if lumDiff > 12 {
                     movingPixels += 1
                     totalDiff += lumDiff
                     spreadMoving[sIdx] += 1
@@ -319,92 +501,82 @@ final class BasicFeatureExtractor: FeatureExtractor {
             }
         }
 
-        // Shuttlecock velocity detection via arrived/departed cluster displacement.
+        // --- Shuttlecock detection: find motion blobs and score by speed/size ---
         //
-        // Physical model: When the shuttlecock moves from position A to B between frames:
-        //   - Position A loses its white pixels → "departed" cluster at A
-        //   - Position B gains white pixels → "arrived" cluster at B
-        //   - Displacement A→B = shuttlecock velocity
+        // Extract blobs from the motion grid. Each blob is a connected cluster of
+        // cells with significant motion. Then for each pair of blobs in the current
+        // frame vs previous frame's blobs, compute displacement.
         //
-        // Key insight: the shuttlecock travels the FARTHEST of any white object.
-        // Shoes create dense clusters but move short distances (20-60px).
-        // The shuttlecock is smaller but crosses the court (80-400px at 960px).
-        //
-        // Algorithm:
-        // 1. Find top-N clusters in each grid (not just the densest)
-        // 2. For each arrived cluster, find its nearest departed cluster
-        // 3. The arrived cluster with the LARGEST nearest-departed distance = shuttlecock
-        //    (it traveled the farthest from where it was)
+        // Simpler approach: find top-N motion clusters, measure their size (pixel count).
+        // The shuttlecock blob is SMALL (5-30 moving pixels in the grid).
+        // Player blobs are LARGE (50-500+ moving pixels).
+        // Score = intensity / size — small bright blobs win.
+
         let resolutionScale = Double(width) / 960.0
-        let minClusterPixels = max(8, Int(12.0 * resolutionScale * resolutionScale))
+        let minBlobPixels = max(2, Int(3.0 * resolutionScale * resolutionScale))
 
-        let arrivedClusters = findTopClusters(in: arrivedGrid, gridW: gridW, gridH: gridH,
-                                               cellSize: cellSize, startRow: startRow,
-                                               minPixels: minClusterPixels, maxClusters: 5)
-        let departedClusters = findTopClusters(in: departedGrid, gridW: gridW, gridH: gridH,
-                                                cellSize: cellSize, startRow: startRow,
-                                                minPixels: minClusterPixels, maxClusters: 5)
+        let blobs = findTopClustersWithIntensity(motionGrid: motionGrid, intensityGrid: intensityGrid,
+                                                  gridW: gridW, gridH: gridH,
+                                                  cellSize: cellSize, startRow: startRow,
+                                                  minPixels: minBlobPixels, maxClusters: 10)
 
-        let maxClusterSum = max(
-            arrivedClusters.first?.pixels ?? 0,
-            departedClusters.first?.pixels ?? 0
-        )
+        // Score ALL blobs by intensity/size ratio. No hard size cutoff — the scoring
+        // naturally favors small intense blobs (shuttlecock) over large ones (players).
+        // score = avgIntensity / size^0.7  (stronger size penalty than sqrt)
+        var bestBlobScore: Double = 0
+        var bestBlob: (x: Double, y: Double, pixels: Int, totalIntensity: Double)? = nil
 
-        // For each arrived cluster, find its nearest departed cluster.
-        // The pair with the LARGEST nearest-departed distance = shuttlecock.
-        // Shoes move short distances (nearest departed is close by).
-        // The shuttlecock moves far (nearest departed is its old position, far away).
-        var shuttlecockVelocity: Double = 0
-        var bestArrivedCluster: (x: Double, y: Double, pixels: Int)? = nil
+        for blob in blobs {
+            let avgIntensity = blob.totalIntensity / max(1.0, Double(blob.pixels))
+            // size^0.7 penalizes large blobs more aggressively than sqrt
+            let sizePenalty = pow(Double(blob.pixels), 0.7)
+            var score = avgIntensity / sizePenalty
 
-        if !departedClusters.isEmpty {
-            for arr in arrivedClusters {
-                // Find nearest departed cluster to this arrived cluster
-                var nearestDist = Double.greatestFiniteMagnitude
-                for dep in departedClusters {
-                    let dx = arr.x - dep.x
-                    let dy = arr.y - dep.y
-                    let dist = sqrt(dx * dx + dy * dy)
-                    if dist < nearestDist {
-                        nearestDist = dist
-                    }
-                }
+            // Calibration proximity boost
+            if let hint = calibrationHint {
+                let normX = blob.x / Double(width)
+                let normY = blob.y / Double(height)
+                let dx = normX - Double(hint.x)
+                let dy = normY - Double(hint.y)
+                let distToHint = sqrt(dx * dx + dy * dy)
+                score *= 1.0 + 2.0 * exp(-distToHint * distToHint / (2 * 0.08 * 0.08))
+            }
 
-                // The arrived cluster whose nearest departed is farthest = shuttlecock
-                if nearestDist > shuttlecockVelocity && nearestDist < Double.greatestFiniteMagnitude {
-                    shuttlecockVelocity = nearestDist
-                    bestArrivedCluster = arr
-                }
+            if score > bestBlobScore {
+                bestBlobScore = score
+                bestBlob = blob
             }
         }
 
-        // Map velocity to flight score.
-        // At 960px, 200ms between frames:
-        //   Shoe/player movement: nearest departed is 10-50px away
-        //   Slow net shot: 60-100px
-        //   Moderate rally: 100-250px
-        //   Fast smash: 250-400px
-        let minFlightSpeed = 60.0 * resolutionScale    // Higher: filter out shoe movement
-        let fullFlightSpeed = 180.0 * resolutionScale
-        let maxReasonableSpeed = 500.0 * resolutionScale
+        // Debug: log blob stats every ~2 seconds
+        if Int(timestamp * 5) % 10 == 0 {
+            if blobs.isEmpty {
+                print(String(format: "t=%.1f NO BLOBS (motionGrid max=%d)", timestamp, motionGrid.max() ?? 0))
+            } else {
+                let sizes = blobs.map(\.pixels)
+                print(String(format: "t=%.1f blobs=%d sizes=%@ bestScore=%.1f bestPx=%d avgInt=%.0f",
+                             timestamp, blobs.count, sizes.description,
+                             bestBlobScore, bestBlob?.pixels ?? 0,
+                             (bestBlob?.totalIntensity ?? 0) / max(1, Double(bestBlob?.pixels ?? 1))))
+            }
+        }
 
+        // Compute flight score. Use the best blob's score relative to thresholds.
         let rawFlightScore: Double
-        if shuttlecockVelocity >= minFlightSpeed && shuttlecockVelocity <= maxReasonableSpeed {
-            rawFlightScore = min((shuttlecockVelocity - minFlightSpeed) / (fullFlightSpeed - minFlightSpeed), 1.0)
+        if bestBlob != nil {
+            let threshold = 3.0 * resolutionScale
+            let ceiling = 20.0 * resolutionScale
+            rawFlightScore = min(max(bestBlobScore - threshold, 0) / (ceiling - threshold), 1.0)
         } else {
             rawFlightScore = 0
         }
 
-        // Exponential moving average for smoothing.
-        // Alpha=0.5: responsive to changes (reaches ~0.9 after 4 frames of flight),
-        // drops quickly when flight stops (~4 frames to reach ~0.1).
-        // The shuttlecock moves continuously during rallies → sustained high score.
+        // EMA smoothing
         flightScoreEMA = flightScoreEMA * 0.5 + rawFlightScore * 0.5
-
         let shuttlecockScore = flightScoreEMA
         let flightScore = flightScoreEMA
 
-        // General motion score
+        // General motion score (unchanged)
         let generalMotionScore: Double
         if regionPixels > 0, movingPixels > 0 {
             let motionFraction = Double(movingPixels) / Double(regionPixels)
@@ -415,10 +587,8 @@ final class BasicFeatureExtractor: FeatureExtractor {
             generalMotionScore = 0
         }
 
-        // Multi-region motion spread: count how many coarse regions have significant motion.
-        // During rallies, 3-4 players move across the court → 6-12 active regions (of 24).
-        // During breaks, 0-1 people walking → 0-3 active regions.
-        let spreadActiveThreshold = 0.015 // 1.5% of pixels in a region must be moving
+        // Multi-region spread (unchanged)
+        let spreadActiveThreshold = 0.015
         var activeRegions = 0
         for i in 0..<spreadCellCount {
             if spreadTotal[i] > 0 {
@@ -428,15 +598,9 @@ final class BasicFeatureExtractor: FeatureExtractor {
                 }
             }
         }
-        // Normalize: 8+ active regions = full score (typical rally with 4 players)
         let spreadScore = min(Double(activeRegions) / 8.0, 1.0)
 
-        // Player presence score from Vision person detection.
-        // At typical badminton camera distance, Vision detects 0-3 people
-        // (players are small, partially overlapping). Calibrated to actual distribution:
-        //   0 detected → likely break/static (31% of frames in test video)
-        //   1 detected → ambiguous, slight boost (49%)
-        //   2+ detected → strong rally signal, multiple players active (21%)
+        // Player presence (unchanged)
         let playerPresenceScore: Double
         switch personCount {
         case 3...: playerPresenceScore = 1.0
@@ -445,20 +609,14 @@ final class BasicFeatureExtractor: FeatureExtractor {
         default:   playerPresenceScore = 0.0
         }
 
-        // Four-signal blend:
-        //   generalMotion * (base + shuttlecockBoost + spreadBoost + playerBoost)
-        //   base=0.2: floor when no signals detected
-        //   Full rally (all=1.0): multiplier = 1.0
-        //   Full break (all=0.0): multiplier = 0.2
-        //   This creates ~5x gap between rally and break scores.
-        //   Player presence has the largest weight (0.3) because it's
-        //   the most reliable signal — players on court = game in progress.
         let blended = min(generalMotionScore * (0.2 + 0.2 * shuttlecockScore + 0.25 * spreadScore + 0.35 * playerPresenceScore), 1.0)
+
+        let maxClusterSum = blobs.first?.pixels ?? 0
 
         if collectDiagnostics {
             diagnostics.append(MotionDiagnostics(
                 timestamp: timestamp,
-                displacedWhiteCount: totalDisplacedWhite,
+                displacedWhiteCount: blobs.reduce(0) { $0 + $1.pixels },
                 maxClusterSum: maxClusterSum,
                 shuttlecockScore: shuttlecockScore,
                 generalMotionScore: generalMotionScore,
@@ -470,11 +628,10 @@ final class BasicFeatureExtractor: FeatureExtractor {
             ))
         }
 
-        // Normalize shuttlecock position to 0-1 range (relative to full frame).
-        // Uses the arrived cluster with the largest travel distance (= shuttlecock).
+        // Shuttlecock position from the best small-fast blob
         let shuttlecockPos: (x: Double, y: Double)?
-        if let arr = bestArrivedCluster, rawFlightScore > 0 {
-            shuttlecockPos = (x: arr.x / Double(width), y: arr.y / Double(height))
+        if let blob = bestBlob, rawFlightScore > 0.1 {
+            shuttlecockPos = (x: blob.x / Double(width), y: blob.y / Double(height))
         } else {
             shuttlecockPos = nil
         }
@@ -484,7 +641,7 @@ final class BasicFeatureExtractor: FeatureExtractor {
 
     // MARK: - Cluster Detection
 
-    /// Find the top-N clusters of displaced white pixels in a grid.
+    /// Find the top-N clusters of motion pixels in a grid.
     /// Returns clusters sorted by density (most pixels first).
     /// Each cluster is a 3x3 neighborhood around a peak cell.
     /// Clusters don't overlap (cells are marked as used after each extraction).
@@ -531,6 +688,57 @@ final class BasicFeatureExtractor: FeatureExtractor {
 
             guard totalPixels >= minPixels && wTotal > 0 else { continue }
             result.append((x: wX / wTotal, y: wY / wTotal, pixels: totalPixels))
+        }
+
+        return result
+    }
+
+    /// Find top-N motion clusters with their total intensity.
+    /// Like findTopClusters but also sums intensityGrid values for proper scoring.
+    private func findTopClustersWithIntensity(
+        motionGrid: [Int], intensityGrid: [Double],
+        gridW: Int, gridH: Int, cellSize: Int, startRow: Int,
+        minPixels: Int, maxClusters: Int
+    ) -> [(x: Double, y: Double, pixels: Int, totalIntensity: Double)] {
+        var result: [(x: Double, y: Double, pixels: Int, totalIntensity: Double)] = []
+        var usedCells = Set<Int>()
+
+        for _ in 0..<maxClusters {
+            var maxCount = 0
+            var maxGX = 0, maxGY = 0
+            for gy in 0..<gridH {
+                for gx in 0..<gridW {
+                    let idx = gy * gridW + gx
+                    guard !usedCells.contains(idx) else { continue }
+                    if motionGrid[idx] > maxCount {
+                        maxCount = motionGrid[idx]
+                        maxGX = gx
+                        maxGY = gy
+                    }
+                }
+            }
+            guard maxCount > 0 else { break }
+
+            var totalPixels = 0
+            var totalIntensity = 0.0
+            var wX = 0.0, wY = 0.0, wTotal = 0.0
+            for dy in -1...1 {
+                for dx in -1...1 {
+                    let gx = maxGX + dx, gy = maxGY + dy
+                    guard gx >= 0 && gx < gridW && gy >= 0 && gy < gridH else { continue }
+                    let idx = gy * gridW + gx
+                    usedCells.insert(idx)
+                    let w = Double(motionGrid[idx])
+                    totalPixels += motionGrid[idx]
+                    totalIntensity += intensityGrid[idx]
+                    wX += Double(gx * cellSize + cellSize / 2) * w
+                    wY += Double(gy * cellSize + cellSize / 2 + startRow) * w
+                    wTotal += w
+                }
+            }
+
+            guard totalPixels >= minPixels && wTotal > 0 else { continue }
+            result.append((x: wX / wTotal, y: wY / wTotal, pixels: totalPixels, totalIntensity: totalIntensity))
         }
 
         return result
