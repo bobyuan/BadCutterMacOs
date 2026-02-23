@@ -155,13 +155,17 @@ final class ShuttlecockDetector {
             return Array(repeating: nil, count: seqLen)
         }
 
-        // Read output using subscript access — safe for both Float16 and Float32 outputs
+        // Read output heatmap using direct pointer access when possible (avoids NSNumber boxing)
         var results: [(position: (x: Double, y: Double), confidence: Double)?] = []
         for i in 0..<seqLen {
             let planeOffset = i * h * w
             var heatmap = [Float](repeating: 0, count: h * w)
-            for j in 0..<(h * w) {
-                heatmap[j] = outputArray[planeOffset + j].floatValue
+            if outputArray.dataType == .float32 {
+                let ptr = outputArray.dataPointer.assumingMemoryBound(to: Float.self)
+                for j in 0..<(h * w) { heatmap[j] = ptr[planeOffset + j] }
+            } else {
+                // Fallback to subscript access for Float16 or other types (auto-converts via NSNumber)
+                for j in 0..<(h * w) { heatmap[j] = outputArray[planeOffset + j].floatValue }
             }
             results.append(extractPosition(from: heatmap, width: w, height: h))
         }
