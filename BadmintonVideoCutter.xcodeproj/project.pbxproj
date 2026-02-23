@@ -43,6 +43,8 @@
 		ED06773894EB74D348455AF8 /* HybridSegmenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */; };
 		FDF11AA1BFD26D240D222501 /* ExportTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0286648C5B3CA2E34F2ADA7 /* ExportTabView.swift */; };
 		B3C4D5E6F7A8B9C0D1E2F3A4 /* TrackNetV3.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* TrackNetV3.mlpackage */; };
+		F4A5B6C7D8E9F0A1B2C3D4E5 /* TrajectoryAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */; };
+		A5B6C7D8E9F0A1B2C3D4E5F6 /* TrajectoryAnalyzerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -95,6 +97,8 @@
 		F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridSegmenterTests.swift; sourceTree = "<group>"; };
 		F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridSegmenter.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* TrackNetV3.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = TrackNetV3.mlpackage; sourceTree = "<group>"; };
+		D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrajectoryAnalyzer.swift; sourceTree = "<group>"; };
+		E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrajectoryAnalyzerTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -195,6 +199,7 @@
 				6AE4430931B9FFC0939EFE86 /* BasicFeatureExtractorTests.swift */,
 				F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */,
 				C7A8B9D0E1F2A3B4C5D6E7F8 /* ShuttlecockDetectorTests.swift */,
+				E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */,
 			);
 			path = SegmentationTests;
 			sourceTree = "<group>";
@@ -226,6 +231,7 @@
 				F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */,
 				CE014B1EC6003E8BF9511DCF /* ServeDetector.swift */,
 				B4E917A3D62C8F0E5A1B73D9 /* ShuttlecockDetector.swift */,
+				D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */,
 			);
 			path = Segmentation;
 			sourceTree = "<group>";
@@ -327,6 +333,7 @@
 				21BB9C29BC55D238F9AFDE6D /* HybridSegmenterTests.swift in Sources */,
 				94C4A7DEAC0442730297BB4C /* SegmentUtilsTests.swift in Sources */,
 				D8B9C0E1F2A3B4C5D6E7F8A9 /* ShuttlecockDetectorTests.swift in Sources */,
+				A5B6C7D8E9F0A1B2C3D4E5F6 /* TrajectoryAnalyzerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -360,6 +367,7 @@
 				A28A73F726CF374EE5A9F60F /* SegmentUtils.swift in Sources */,
 				9E68F64006AB97CB759D005D /* ServeDetector.swift in Sources */,
 				7F3A61D8E4B925C0A8D2F146 /* ShuttlecockDetector.swift in Sources */,
+				F4A5B6C7D8E9F0A1B2C3D4E5 /* TrajectoryAnalyzer.swift in Sources */,
 				8E8595DD1480ECECF403ADF9 /* TimelineTabView.swift in Sources */,
 				5D9270847D01195C7E0987BA /* TimelineViewPlaceholder.swift in Sources */,
 				9D16CA8A2C5594DC9869F993 /* VideoExporter.swift in Sources */,

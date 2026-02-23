@@ -79,6 +79,13 @@ struct AnalysisConfig: Codable {
     var postRollSeconds: TimeInterval = 1.5
     var maxExpectedRallyDuration: TimeInterval = 25.0
     var minDipDuration: TimeInterval = 3.0
+
+    // Trajectory-based point splitting
+    var minShuttleGap: TimeInterval = 1.5
+    var maxShuttleGap: TimeInterval = 10.0
+    var shuttleGapThreshold: Double = 0.3
+    var positionDiscontinuityThreshold: Double = 0.3
+    var minGapValidationScore: Int = 2
 }
 
 // MARK: - Point Review & Game Structure

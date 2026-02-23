@@ -248,13 +248,14 @@ final class AppState: ObservableObject {
                 let classifier = HybridSegmenter()
                 let rawSegments = classifier.classify(frames: frames, config: config)
                 let processed = classifier.postProcess(segments: rawSegments, frames: frames, config: config)
-                self.segments = processed
+                let refined = TrajectoryAnalyzer.refineSegments(segments: processed, frames: frames, config: config)
+                self.segments = refined
 
                 deriveGameStructure()
                 deriveTrimSegments()
                 detectServesAndScores()
 
-                let rallyCount = processed.filter { $0.label == .rally }.count
+                let rallyCount = refined.filter { $0.label == .rally }.count
                 let elapsed = Date().timeIntervalSince(analysisStartTime ?? Date())
                 let mlStatus = self.hasShuttlecockModel ? " [ML]" : ""
                 analysisProgress = AnalysisProgress(
@@ -710,13 +711,14 @@ final class AppState: ObservableObject {
                 let classifier = HybridSegmenter()
                 let rawSegments = classifier.classify(frames: frames, config: config)
                 let processed = classifier.postProcess(segments: rawSegments, frames: frames, config: config)
-                self.segments = processed
+                let refined = TrajectoryAnalyzer.refineSegments(segments: processed, frames: frames, config: config)
+                self.segments = refined
 
                 deriveGameStructure()
                 deriveTrimSegments()
                 detectServesAndScores()
 
-                let rallyCount = processed.filter { $0.label == .rally }.count
+                let rallyCount = refined.filter { $0.label == .rally }.count
                 let elapsed = Date().timeIntervalSince(analysisStartTime ?? Date())
                 let mlStatus = self.hasShuttlecockModel ? " [ML]" : ""
                 analysisProgress = AnalysisProgress(
