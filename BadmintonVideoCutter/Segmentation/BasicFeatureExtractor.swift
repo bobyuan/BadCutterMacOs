@@ -456,47 +456,55 @@ final class BasicFeatureExtractor: FeatureExtractor {
         var totalDiff: Int = 0
         var regionPixels = 0
 
-        for y in startRow..<height {
-            let rowOffset = y * width
-            let gridY = (y - startRow) / cellSize
-            let sRow = min((y - startRow) / spreadCellH, spreadRows - 1)
-            for x in 0..<width {
-                let idx = rowOffset + x
-                let rgbaIdx = idx * 4
-                let gridX = x / cellSize
-                let sCol = min(x / spreadCellW, spreadCols - 1)
-                let sIdx = sRow * spreadCols + sCol
+        // Use unsafe pointer access to eliminate per-element bounds checking (~400K pixels × 6 reads)
+        currRGBA.withUnsafeBufferPointer { currBuf in
+            prevRGBA.withUnsafeBufferPointer { prevBuf in
+                let curr = currBuf.baseAddress!
+                let prev = prevBuf.baseAddress!
 
-                let cR = Int(currRGBA[rgbaIdx])
-                let cG = Int(currRGBA[rgbaIdx + 1])
-                let cB = Int(currRGBA[rgbaIdx + 2])
-                let pR = Int(prevRGBA[rgbaIdx])
-                let pG = Int(prevRGBA[rgbaIdx + 1])
-                let pB = Int(prevRGBA[rgbaIdx + 2])
+                for y in startRow..<height {
+                    let rowOffset = y * width
+                    let gridY = (y - startRow) / cellSize
+                    let sRow = min((y - startRow) / spreadCellH, spreadRows - 1)
+                    for x in 0..<width {
+                        let idx = rowOffset + x
+                        let rgbaIdx = idx * 4
+                        let gridX = x / cellSize
+                        let sCol = min(x / spreadCellW, spreadCols - 1)
+                        let sIdx = sRow * spreadCols + sCol
 
-                // Per-channel diff (more sensitive than luminance-only)
-                let diff = abs(cR - pR) + abs(cG - pG) + abs(cB - pB)
+                        let cR = Int(curr[rgbaIdx])
+                        let cG = Int(curr[rgbaIdx + 1])
+                        let cB = Int(curr[rgbaIdx + 2])
+                        let pR = Int(prev[rgbaIdx])
+                        let pG = Int(prev[rgbaIdx + 1])
+                        let pB = Int(prev[rgbaIdx + 2])
 
-                regionPixels += 1
-                spreadTotal[sIdx] += 1
+                        // Per-channel diff (more sensitive than luminance-only)
+                        let diff = abs(cR - pR) + abs(cG - pG) + abs(cB - pB)
 
-                let currLum = (cR * 77 + cG * 150 + cB * 29) >> 8
-                let prevLum = (pR * 77 + pG * 150 + pB * 29) >> 8
-                let lumDiff = abs(currLum - prevLum)
+                        regionPixels += 1
+                        spreadTotal[sIdx] += 1
 
-                if diff > noiseThreshold * 2 {
-                    // This pixel changed between frames (RGB sum diff > 30)
-                    if gridY < gridH && gridX < gridW {
-                        let gi = gridY * gridW + gridX
-                        motionGrid[gi] += 1
-                        intensityGrid[gi] += Double(diff)
+                        let currLum = (cR * 77 + cG * 150 + cB * 29) >> 8
+                        let prevLum = (pR * 77 + pG * 150 + pB * 29) >> 8
+                        let lumDiff = abs(currLum - prevLum)
+
+                        if diff > noiseThreshold * 2 {
+                            // This pixel changed between frames (RGB sum diff > 30)
+                            if gridY < gridH && gridX < gridW {
+                                let gi = gridY * gridW + gridX
+                                motionGrid[gi] += 1
+                                intensityGrid[gi] += Double(diff)
+                            }
+                        }
+
+                        if lumDiff > 12 {
+                            movingPixels += 1
+                            totalDiff += lumDiff
+                            spreadMoving[sIdx] += 1
+                        }
                     }
-                }
-
-                if lumDiff > 12 {
-                    movingPixels += 1
-                    totalDiff += lumDiff
-                    spreadMoving[sIdx] += 1
                 }
             }
         }

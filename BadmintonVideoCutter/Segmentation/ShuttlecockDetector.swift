@@ -127,13 +127,15 @@ final class ShuttlecockDetector {
         let ptr = inputArray.dataPointer.assumingMemoryBound(to: Float.self)
         var channelOffset = 0
         for i in 0..<seqLen {
-            let source = frameBuffer[i]
-            for c in 0..<3 {
-                let chPlane = (channelOffset + c) * (h * w)
-                for y in 0..<h {
-                    let rowOffset = y * w
-                    for x in 0..<w {
-                        ptr[chPlane + rowOffset + x] = source[(rowOffset + x) * 3 + c]
+            frameBuffer[i].withUnsafeBufferPointer { srcBuf in
+                let src = srcBuf.baseAddress!
+                for c in 0..<3 {
+                    let chPlane = (channelOffset + c) * (h * w)
+                    for y in 0..<h {
+                        let rowOffset = y * w
+                        for x in 0..<w {
+                            ptr[chPlane + rowOffset + x] = src[(rowOffset + x) * 3 + c]
+                        }
                     }
                 }
             }
@@ -181,49 +183,54 @@ final class ShuttlecockDetector {
         let targetH = inputHeight
         let pixelCount = targetW * targetH
 
-        // If input matches model resolution, convert directly
-        if width == targetW && height == targetH {
-            var rgb = [Float](repeating: 0, count: pixelCount * 3)
-            for i in 0..<pixelCount {
-                rgb[i * 3] = Float(rgba[i * 4]) / 255.0
-                rgb[i * 3 + 1] = Float(rgba[i * 4 + 1]) / 255.0
-                rgb[i * 3 + 2] = Float(rgba[i * 4 + 2]) / 255.0
+        // Use unsafe pointer access to eliminate per-element bounds checking
+        return rgba.withUnsafeBufferPointer { srcBuf in
+            let src = srcBuf.baseAddress!
+
+            // If input matches model resolution, convert directly
+            if width == targetW && height == targetH {
+                var rgb = [Float](repeating: 0, count: pixelCount * 3)
+                for i in 0..<pixelCount {
+                    rgb[i * 3] = Float(src[i * 4]) / 255.0
+                    rgb[i * 3 + 1] = Float(src[i * 4 + 1]) / 255.0
+                    rgb[i * 3 + 2] = Float(src[i * 4 + 2]) / 255.0
+                }
+                return rgb
             }
-            return rgb
-        }
 
-        // Resize via bilinear interpolation
-        var rgb = [Float](repeating: 0, count: pixelCount * 3)
-        let scaleX = Double(width) / Double(targetW)
-        let scaleY = Double(height) / Double(targetH)
+            // Resize via bilinear interpolation
+            var rgb = [Float](repeating: 0, count: pixelCount * 3)
+            let scaleX = Double(width) / Double(targetW)
+            let scaleY = Double(height) / Double(targetH)
 
-        for y in 0..<targetH {
-            let srcY = Double(y) * scaleY
-            let y0 = min(Int(srcY), height - 1)
-            let y1 = min(y0 + 1, height - 1)
-            let fy = Float(srcY) - Float(y0)
+            for y in 0..<targetH {
+                let srcY = Double(y) * scaleY
+                let y0 = min(Int(srcY), height - 1)
+                let y1 = min(y0 + 1, height - 1)
+                let fy = Float(srcY) - Float(y0)
 
-            for x in 0..<targetW {
-                let srcX = Double(x) * scaleX
-                let x0 = min(Int(srcX), width - 1)
-                let x1 = min(x0 + 1, width - 1)
-                let fx = Float(srcX) - Float(x0)
+                for x in 0..<targetW {
+                    let srcX = Double(x) * scaleX
+                    let x0 = min(Int(srcX), width - 1)
+                    let x1 = min(x0 + 1, width - 1)
+                    let fx = Float(srcX) - Float(x0)
 
-                let dstIdx = (y * targetW + x) * 3
-                for c in 0..<3 {
-                    let v00 = Float(rgba[(y0 * width + x0) * 4 + c])
-                    let v10 = Float(rgba[(y0 * width + x1) * 4 + c])
-                    let v01 = Float(rgba[(y1 * width + x0) * 4 + c])
-                    let v11 = Float(rgba[(y1 * width + x1) * 4 + c])
+                    let dstIdx = (y * targetW + x) * 3
+                    for c in 0..<3 {
+                        let v00 = Float(src[(y0 * width + x0) * 4 + c])
+                        let v10 = Float(src[(y0 * width + x1) * 4 + c])
+                        let v01 = Float(src[(y1 * width + x0) * 4 + c])
+                        let v11 = Float(src[(y1 * width + x1) * 4 + c])
 
-                    let top = v00 * (1 - fx) + v10 * fx
-                    let bot = v01 * (1 - fx) + v11 * fx
-                    rgb[dstIdx + c] = (top * (1 - fy) + bot * fy) / 255.0
+                        let top = v00 * (1 - fx) + v10 * fx
+                        let bot = v01 * (1 - fx) + v11 * fx
+                        rgb[dstIdx + c] = (top * (1 - fy) + bot * fy) / 255.0
+                    }
                 }
             }
-        }
 
-        return rgb
+            return rgb
+        }
     }
 
     // MARK: - Post-processing
