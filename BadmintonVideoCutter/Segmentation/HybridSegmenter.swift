@@ -11,7 +11,7 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         // Fallback: adaptive percentile for the continuous motion score distribution
         // Shuttle mode: position-presence combined score is bimodal
         //   rally center ≈ 0.55-0.65, break center ≈ 0.20-0.30
-        let threshold = shuttlePrimary ? 0.38 : percentile(combinedScores, p: config.rallyPercentile)
+        let threshold = shuttlePrimary ? 0.42 : percentile(combinedScores, p: config.rallyPercentile)
         let labels = combinedScores.map { $0 >= threshold ? SegmentLabel.rally : SegmentLabel.betweenPoints }
 
         var segments: [TimeSegment] = []
@@ -69,11 +69,21 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         let postRolled = applyPostRoll(segments: preRolled, postRoll: postRoll)
         let split = splitLongRallies(segments: postRolled, frames: frames, config: config)
 
-        // Final cleanup: remove 0-duration segments, merge consecutive same-label
-        // (splitLongRallies can produce consecutive breaks when short rally remnants
-        // are dropped between two dip-breaks)
-        let cleaned = SegmentUtils.removeInvalid(split)
-        return SegmentUtils.mergeAdjacent(cleaned, maxGap: 0)
+        // Final cleanup: absorb tiny rally/break fragments, merge consecutive same-label.
+        // Shuttle-primary: aggressive dip splitting creates short rally fragments (1-3s)
+        // from brief motion bursts between dips. These aren't real points — absorb them.
+        let minRally = shuttlePrimary ? 3.0 : config.minRallyDuration
+        let absorbed = split.map { seg -> TimeSegment in
+            if seg.label == .rally && seg.duration < minRally {
+                return TimeSegment(start: seg.start, end: seg.end, label: .betweenPoints, confidence: 0.3)
+            }
+            return seg
+        }
+        let cleaned = SegmentUtils.removeInvalid(absorbed)
+        // Merge gap of 2.0s: absorbed fragments create small gaps between consecutive
+        // break segments that need bridging. This is safe because rally segments
+        // separated by < 2s would have been classified as a single rally.
+        return SegmentUtils.mergeAdjacent(cleaned, maxGap: 2.0)
     }
 
     // MARK: - Combined Score Computation
@@ -166,8 +176,8 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
                 // The shuttle may remain visible during breaks, but player motion
                 // clearly drops (0.05-0.08 break vs 0.10-0.25 rally).
                 scores = rallyFrames.map(\.motionScore)
-                dipThreshold = 0.09
-                minDipDur = 1.5
+                dipThreshold = 0.10
+                minDipDur = 1.0
             } else {
                 let allScores = computeCombinedScores(frames: frames, shuttlePrimary: false, config: config)
                 let classificationThreshold = percentile(allScores, p: config.rallyPercentile)
@@ -176,8 +186,11 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
                 minDipDur = config.minDipDuration
             }
 
-            // Smooth with rolling average (window ~1s = 5 frames at 200ms)
-            let smoothed = rollingAverage(scores, windowSize: 5)
+            // Smooth with rolling average to reduce frame-to-frame noise
+            // Shuttle-primary: narrower window (3 frames ≈ 0.6s) to preserve short dips
+            // Fallback: wider window (5 frames ≈ 1s) for noisier motion signal
+            let smoothWindow = shuttlePrimary ? 3 : 5
+            let smoothed = rollingAverage(scores, windowSize: smoothWindow)
 
             // Find dip regions: contiguous frames below dipScoreThreshold
             let dips = findDips(

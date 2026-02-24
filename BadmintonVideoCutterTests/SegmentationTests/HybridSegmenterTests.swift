@@ -140,6 +140,41 @@ final class HybridSegmenterTests: XCTestCase {
         log("After TrajectoryAnalyzer: \(refined.count)")
         log("Rallies: \(rallies.count), Breaks: \(breaks.count)")
 
+        // --- Analyze long rallies: show motion profile to understand idle time ---
+        let longRallies = rallies.filter { $0.duration > 25 }
+        log("\n--- LONG RALLY MOTION PROFILES (>25s) ---")
+        for rally in longRallies {
+            let rFrames = frames.filter { $0.timestamp >= rally.start && $0.timestamp <= rally.end }
+            let motions = rFrames.map(\.motionScore).sorted()
+            let below09 = rFrames.filter { $0.motionScore < 0.09 }.count
+            let below10 = rFrames.filter { $0.motionScore < 0.10 }.count
+            let below11 = rFrames.filter { $0.motionScore < 0.11 }.count
+            log("  RALLY \(ts(rally.start))-\(ts(rally.end)) (\(String(format: "%.0f", rally.duration))s, \(rFrames.count) frames)")
+            log("    motion: avg=\(fmt(motions.avg)) p10=\(fmt(motions.p(0.10))) p25=\(fmt(motions.p(0.25))) p50=\(fmt(motions.p(0.50)))")
+            log("    <0.09: \(below09)/\(rFrames.count) (\(pct(below09, rFrames.count))%), <0.10: \(below10) (\(pct(below10, rFrames.count))%), <0.11: \(below11) (\(pct(below11, rFrames.count))%)")
+            // Show motion dip regions (consecutive frames below 0.10)
+            var dipStart: Int?
+            for (j, f) in rFrames.enumerated() {
+                if f.motionScore < 0.10 {
+                    if dipStart == nil { dipStart = j }
+                } else {
+                    if let ds = dipStart {
+                        let dur = rFrames[j].timestamp - rFrames[ds].timestamp
+                        if dur >= 1.0 {
+                            log("    dip<0.10: \(ts(rFrames[ds].timestamp))-\(ts(rFrames[j].timestamp)) (\(String(format: "%.1f", dur))s)")
+                        }
+                        dipStart = nil
+                    }
+                }
+            }
+            if let ds = dipStart, let last = rFrames.last {
+                let dur = last.timestamp - rFrames[ds].timestamp
+                if dur >= 1.0 {
+                    log("    dip<0.10: \(ts(rFrames[ds].timestamp))-\(ts(last.timestamp)) (\(String(format: "%.1f", dur))s)")
+                }
+            }
+        }
+
         log("\nAll final segments:")
         for (i, seg) in refined.enumerated() {
             let label = seg.label == .rally ? "RALLY " : "BREAK "
