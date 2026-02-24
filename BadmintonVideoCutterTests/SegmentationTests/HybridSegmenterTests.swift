@@ -140,6 +140,19 @@ final class HybridSegmenterTests: XCTestCase {
         log("After TrajectoryAnalyzer: \(refined.count)")
         log("Rallies: \(rallies.count), Breaks: \(breaks.count)")
 
+        // --- Detailed analysis of first few rallies ---
+        log("\n--- FIRST 3 RALLY DETAIL ---")
+        for rally in rallies.prefix(3) {
+            let rFrames = frames.filter { $0.timestamp >= rally.start && $0.timestamp <= rally.end }
+            log("  RALLY \(ts(rally.start))-\(ts(rally.end)) (\(String(format: "%.0f", rally.duration))s)")
+            // Per-frame motion + shuttle presence
+            for f in rFrames {
+                let hasPos = f.shuttlecockPosition != nil ? "POS" : "   "
+                let bar = String(repeating: "#", count: Int(f.motionScore * 50))
+                log("    \(ts(f.timestamp)) m=\(fmt(f.motionScore)) \(hasPos) |\(bar)")
+            }
+        }
+
         // --- Analyze long rallies: show motion profile to understand idle time ---
         let longRallies = rallies.filter { $0.duration > 25 }
         log("\n--- LONG RALLY MOTION PROFILES (>25s) ---")

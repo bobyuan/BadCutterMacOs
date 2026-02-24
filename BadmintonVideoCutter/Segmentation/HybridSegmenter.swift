@@ -154,8 +154,13 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
 
         var result: [TimeSegment] = []
 
+        // Shuttle-primary: lower the duration threshold from 25s to 15s.
+        // Badminton rallies rarely exceed 15s. The original 25s threshold misses
+        // 20-24s segments that contain 2 points with a bird-pickup pause between.
+        let maxDuration = shuttlePrimary ? 15.0 : config.maxExpectedRallyDuration
+
         for segment in segments {
-            guard segment.label == .rally && segment.duration > config.maxExpectedRallyDuration else {
+            guard segment.label == .rally && segment.duration > maxDuration else {
                 result.append(segment)
                 continue
             }
@@ -176,7 +181,13 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
                 // The shuttle may remain visible during breaks, but player motion
                 // clearly drops (0.05-0.08 break vs 0.10-0.25 rally).
                 scores = rallyFrames.map(\.motionScore)
-                dipThreshold = 0.10
+                // Adaptive threshold: use the rally's own median motion * 0.85.
+                // This catches dips relative to the rally's activity level.
+                // Example: rally with median 0.143 → threshold 0.122 → catches
+                // bird-pickup dips at 0.10-0.13 that a fixed 0.10 would miss.
+                // Floor at 0.10 to avoid splitting on noise in low-motion rallies.
+                let medianMotion = scores.sorted()[scores.count / 2]
+                dipThreshold = max(0.10, medianMotion * 0.85)
                 minDipDur = 1.0
             } else {
                 let allScores = computeCombinedScores(frames: frames, shuttlePrimary: false, config: config)
