@@ -248,7 +248,9 @@ final class AppState: ObservableObject {
                 let classifier = HybridSegmenter()
                 let rawSegments = classifier.classify(frames: frames, config: config)
                 let processed = classifier.postProcess(segments: rawSegments, frames: frames, config: config)
-                let refined = TrajectoryAnalyzer.refineSegments(segments: processed, frames: frames, config: config)
+                let taRefined = TrajectoryAnalyzer.refineSegments(segments: processed, frames: frames, config: config)
+                // Clean up TA artifacts: remove 0-duration segments, merge consecutive same-label
+                let refined = SegmentUtils.mergeAdjacent(SegmentUtils.removeInvalid(taRefined), maxGap: 0.5)
                 self.segments = refined
 
                 deriveGameStructure()
@@ -711,7 +713,9 @@ final class AppState: ObservableObject {
                 let classifier = HybridSegmenter()
                 let rawSegments = classifier.classify(frames: frames, config: config)
                 let processed = classifier.postProcess(segments: rawSegments, frames: frames, config: config)
-                let refined = TrajectoryAnalyzer.refineSegments(segments: processed, frames: frames, config: config)
+                let taRefined = TrajectoryAnalyzer.refineSegments(segments: processed, frames: frames, config: config)
+                // Clean up TA artifacts: remove 0-duration segments, merge consecutive same-label
+                let refined = SegmentUtils.mergeAdjacent(SegmentUtils.removeInvalid(taRefined), maxGap: 0.5)
                 self.segments = refined
 
                 deriveGameStructure()

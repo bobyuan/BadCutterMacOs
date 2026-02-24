@@ -4,14 +4,14 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     func classify(frames: [FeatureFrame], config: AnalysisConfig) -> [TimeSegment] {
         guard frames.count > 1 else { return [] }
 
-        // Motion is the full base signal (100%). Audio is a bonus that can only help,
-        // never penalize. When audio=0 during active play, the score is unaffected.
-        let audioBonus = config.audioWeight
-        let combinedScores = frames.map { frame in
-            min(frame.motionScore + audioBonus * frame.audioScore, 1.0)
-        }
+        let shuttlePrimary = useShuttlePrimary(frames: frames)
+        let combinedScores = computeCombinedScores(frames: frames, shuttlePrimary: shuttlePrimary, config: config)
 
-        let threshold = percentile(combinedScores, p: config.rallyPercentile)
+        // Shuttle-primary: fixed threshold (displacement-based signal is bimodal)
+        // Fallback: adaptive percentile for the continuous motion score distribution
+        // Shuttle mode: position-presence combined score is bimodal
+        //   rally center ≈ 0.55-0.65, break center ≈ 0.20-0.30
+        let threshold = shuttlePrimary ? 0.38 : percentile(combinedScores, p: config.rallyPercentile)
         let labels = combinedScores.map { $0 >= threshold ? SegmentLabel.rally : SegmentLabel.betweenPoints }
 
         var segments: [TimeSegment] = []
@@ -41,16 +41,96 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     }
 
     func postProcess(segments: [TimeSegment], frames: [FeatureFrame], config: AnalysisConfig) -> [TimeSegment] {
+        let shuttlePrimary = useShuttlePrimary(frames: frames)
         let valid = SegmentUtils.removeInvalid(segments)
-        let merged = SegmentUtils.mergeAdjacent(valid, maxGap: config.flipHysteresisSeconds)
+
+        // Shuttle-primary: tighter merge gap — the shuttle position signal is precise,
+        // so don't over-merge. Fallback: original hysteresis for noisy motion signal.
+        let mergeGap = shuttlePrimary ? 0.5 : config.flipHysteresisSeconds
+        let merged = SegmentUtils.mergeAdjacent(valid, maxGap: mergeGap)
+
+        // Shuttle-primary: shorter min break — shuttle absence gaps are brief (2-3s)
+        // even though the actual between-point pause is longer.
+        let minBreak = shuttlePrimary ? 1.5 : config.minBetweenPointsDuration
         let filtered = merged.filter {
             if $0.label == .rally { return $0.duration >= config.minRallyDuration }
-            if $0.label == .betweenPoints { return $0.duration >= config.minBetweenPointsDuration }
+            if $0.label == .betweenPoints { return $0.duration >= minBreak }
             return true
         }
-        let preRolled = applyPreRoll(segments: filtered, preRoll: config.preRollSeconds)
-        let postRolled = applyPostRoll(segments: preRolled, postRoll: config.postRollSeconds)
-        return splitLongRallies(segments: postRolled, frames: frames, config: config)
+
+        // Shuttle-primary: minimal pre/post roll — shuttle position signal already
+        // captures rally boundaries precisely (shuttle appears at serve, disappears
+        // at point end). Large pre/post roll (2.5+1.5=4.0s) would consume real breaks
+        // that are only 2-4s long. Fallback: original generous pre/post roll for the
+        // noisy motion signal which may start/end classification late.
+        let preRoll = shuttlePrimary ? 0.5 : config.preRollSeconds
+        let postRoll = shuttlePrimary ? 0.5 : config.postRollSeconds
+        let preRolled = applyPreRoll(segments: filtered, preRoll: preRoll)
+        let postRolled = applyPostRoll(segments: preRolled, postRoll: postRoll)
+        let split = splitLongRallies(segments: postRolled, frames: frames, config: config)
+
+        // Final cleanup: remove 0-duration segments, merge consecutive same-label
+        // (splitLongRallies can produce consecutive breaks when short rally remnants
+        // are dropped between two dip-breaks)
+        let cleaned = SegmentUtils.removeInvalid(split)
+        return SegmentUtils.mergeAdjacent(cleaned, maxGap: 0)
+    }
+
+    // MARK: - Combined Score Computation
+
+    /// Computes per-frame combined scores. When ML shuttle position data is available,
+    /// uses shuttle displacement velocity (is the shuttle *moving*?) as the ML signal.
+    /// Shuttle detected but stationary = break. Shuttle moving across court = rally.
+    /// Falls back to original motion+audio formula when no ML data.
+    private func computeCombinedScores(frames: [FeatureFrame], shuttlePrimary: Bool, config: AnalysisConfig) -> [Double] {
+        if shuttlePrimary {
+            // Use shuttle position gaps as the primary signal.
+            // During breaks, shuttle has no position for extended stretches.
+            // During rallies, positions are present most frames.
+            // Blend: position presence rate (60%) + motion (30%) + audio (10%)
+            let presenceScores = computeShuttlePresenceScores(frames: frames)
+            return frames.indices.map { i in
+                min(0.60 * presenceScores[i] + 0.30 * frames[i].motionScore + 0.10 * frames[i].audioScore, 1.0)
+            }
+        } else {
+            // Fallback: original motion + audio bonus (no ML data)
+            let audioBonus = config.audioWeight
+            return frames.map { frame in
+                min(frame.motionScore + audioBonus * frame.audioScore, 1.0)
+            }
+        }
+    }
+
+    /// Computes per-frame shuttle "presence" score using a rolling window.
+    /// Key insight: during breaks, shuttle has NO position for extended stretches
+    /// (shuttle picked up, not visible). During rallies, positions are present
+    /// in most frames. Using a wide window (~4s) ensures brief detection gaps
+    /// during rallies are bridged, while sustained absence during breaks (>2s)
+    /// drops the score significantly.
+    private func computeShuttlePresenceScores(frames: [FeatureFrame]) -> [Double] {
+        let presence = frames.map { $0.shuttlecockPosition != nil ? 1.0 : 0.0 }
+
+        // Wide rolling window: ~4s = 20 frames at 200ms.
+        // Breaks typically show 10-15+ consecutive no-position frames (~2-3s).
+        // A 20-frame window captures this: break center → presence ≈ 0.3-0.5.
+        // Rally: mostly positions present → presence ≈ 0.7-0.9.
+        let windowSize = 20
+        let halfW = windowSize / 2
+        return frames.indices.map { i in
+            let lo = max(0, i - halfW)
+            let hi = min(frames.count - 1, i + halfW)
+            let window = presence[lo...hi]
+            return window.reduce(0, +) / Double(window.count)
+        }
+    }
+
+    /// Returns true when ML shuttle position data is meaningfully present.
+    /// Requires >10% of frames to have position data (ML model was active).
+    private func useShuttlePrimary(frames: [FeatureFrame]) -> Bool {
+        guard !frames.isEmpty else { return false }
+        let positionCount = frames.filter { $0.shuttlecockPosition != nil }.count
+        let positionRate = Double(positionCount) / Double(frames.count)
+        return positionRate > 0.10
     }
 
     // MARK: - Rally Splitting
@@ -60,14 +140,7 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     private func splitLongRallies(segments: [TimeSegment], frames: [FeatureFrame], config: AnalysisConfig) -> [TimeSegment] {
         guard !frames.isEmpty else { return segments }
 
-        let audioBonus = config.audioWeight
-
-        // Compute classification threshold (same as classify)
-        let allScores = frames.map { frame -> Double in
-            min(frame.motionScore + audioBonus * frame.audioScore, 1.0)
-        }
-        let classificationThreshold = percentile(allScores, p: config.rallyPercentile)
-        let dipScoreThreshold = classificationThreshold * 0.7
+        let shuttlePrimary = useShuttlePrimary(frames: frames)
 
         var result: [TimeSegment] = []
 
@@ -84,9 +157,23 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
                 continue
             }
 
-            // Compute combined scores for these frames
-            let scores = rallyFrames.map { frame -> Double in
-                min(frame.motionScore + audioBonus * frame.audioScore, 1.0)
+            let scores: [Double]
+            let dipThreshold: Double
+            let minDipDur: TimeInterval
+
+            if shuttlePrimary {
+                // Shuttle-primary: use motion score for dip detection.
+                // The shuttle may remain visible during breaks, but player motion
+                // clearly drops (0.05-0.08 break vs 0.10-0.25 rally).
+                scores = rallyFrames.map(\.motionScore)
+                dipThreshold = 0.09
+                minDipDur = 1.5
+            } else {
+                let allScores = computeCombinedScores(frames: frames, shuttlePrimary: false, config: config)
+                let classificationThreshold = percentile(allScores, p: config.rallyPercentile)
+                scores = computeCombinedScores(frames: rallyFrames, shuttlePrimary: false, config: config)
+                dipThreshold = classificationThreshold * 0.7
+                minDipDur = config.minDipDuration
             }
 
             // Smooth with rolling average (window ~1s = 5 frames at 200ms)
@@ -96,8 +183,8 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
             let dips = findDips(
                 frames: rallyFrames,
                 smoothedScores: smoothed,
-                threshold: dipScoreThreshold,
-                minDuration: config.minDipDuration
+                threshold: dipThreshold,
+                minDuration: minDipDur
             )
 
             if dips.isEmpty {
