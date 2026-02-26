@@ -205,6 +205,412 @@ final class HybridSegmenterTests: XCTestCase {
         }
     }
 
+    /// Analyze shuttle state signals in the 0:00-0:35 range to find features that differentiate
+    /// "active play" from "bird pickup / idle" — since motion alone can't (both ~0.12-0.15).
+    func testShuttleStateAnalysis() async throws {
+        let outputPath = "/tmp/shuttle_state_analysis.txt"
+        var output = ""
+        func log(_ s: String) { output += s + "\n"; print(s) }
+
+        let frames = try await loadOrExtractFrames(log: log)
+        XCTAssertFalse(frames.isEmpty, "Should produce feature frames")
+
+        // Filter to 0:00 - 0:35
+        let rangeFrames = frames.filter { $0.timestamp >= 0 && $0.timestamp <= 35 }
+        log("Frames in 0:00-0:35 range: \(rangeFrames.count)")
+
+        // ── Per-frame dump ──
+        log("\n" + String(repeating: "=", count: 110))
+        log("PER-FRAME DATA  (0:00 - 0:35)")
+        log(String(repeating: "=", count: 110))
+        log("Time        Motion    Audio   Flight   ShuttlePos(x,y)     HasPos  Displ")
+
+        var prevPos: (x: Double, y: Double)? = nil
+        var frameDisplacements: [TimeInterval: Double] = [:]
+
+        for f in rangeFrames {
+            let posStr: String
+            let hasPosStr: String
+            var displacement: Double? = nil
+
+            if let pos = f.shuttlecockPosition {
+                posStr = String(format: "(%6.4f,%6.4f)", pos.x, pos.y)
+                hasPosStr = "Y"
+                if let prev = prevPos {
+                    let dx = pos.x - prev.x
+                    let dy = pos.y - prev.y
+                    displacement = sqrt(dx * dx + dy * dy)
+                    frameDisplacements[f.timestamp] = displacement
+                }
+                prevPos = pos
+            } else {
+                posStr = "nil"
+                hasPosStr = " "
+                prevPos = nil
+            }
+
+            let dispStr = displacement.map { fmt($0) } ?? "  -"
+            log("\(ts(f.timestamp))  \(fmt(f.motionScore))  \(fmt(f.audioScore))  \(fmt(f.shuttlecockFlightScore))  \(posStr)  \(hasPosStr)  \(dispStr)")
+        }
+
+        // ── Region definitions ──
+        struct Region {
+            let name: String
+            let start: TimeInterval
+            let end: TimeInterval
+            let description: String
+        }
+
+        let regions: [Region] = [
+            Region(name: "POINT 1 ACTIVE",   start:  4, end: 10, description: "Point 1 active play"),
+            Region(name: "POINT 1 ENDING",   start: 10, end: 12, description: "Point 1 ending / shuttle landing"),
+            Region(name: "BETWEEN POINTS",   start: 12, end: 15, description: "Between points (bird out/picking up)"),
+            Region(name: "POINT 2 ACTIVE",   start: 15, end: 22, description: "Point 2 active play"),
+            Region(name: "POST-POINT IDLE",  start: 22, end: 28, description: "Post-point idle / bird pickup"),
+        ]
+
+        // ── Region summary statistics ──
+        log("\n" + String(repeating: "=", count: 110))
+        log("REGION SUMMARY STATISTICS")
+        log(String(repeating: "=", count: 110))
+
+        // Collect stats per region for the comparison table
+        struct RegionStats {
+            let name: String
+            let motionAvg: Double; let motionMin: Double; let motionMax: Double
+            let posPresenceRate: Double
+            let avgDisplacement: Double
+            let displacementCount: Int
+            let audioAvg: Double
+            let flightAvg: Double
+            let frameCount: Int
+        }
+        var allStats: [RegionStats] = []
+
+        for region in regions {
+            let rFrames = rangeFrames.filter { $0.timestamp >= region.start && $0.timestamp <= region.end }
+            guard !rFrames.isEmpty else { continue }
+
+            let motions = rFrames.map(\.motionScore)
+            let audios = rFrames.map(\.audioScore)
+            let flights = rFrames.map(\.shuttlecockFlightScore)
+            let posCount = rFrames.filter { $0.shuttlecockPosition != nil }.count
+            let presenceRate = Double(posCount) / Double(rFrames.count)
+
+            // Displacements for frames within this region
+            let regionDisplacements = rFrames.compactMap { frameDisplacements[$0.timestamp] }
+            let avgDisp = regionDisplacements.isEmpty ? 0.0 : regionDisplacements.avg
+
+            log("\n── \(region.name): \(region.description) ──")
+            log("   Time range: \(ts(region.start)) - \(ts(region.end))  |  Frames: \(rFrames.count)")
+            log("   Motion:     avg=\(fmt(motions.avg))  min=\(fmt(motions.min()!))  max=\(fmt(motions.max()!))")
+            log("   Audio:      avg=\(fmt(audios.avg))")
+            log("   Flight:     avg=\(fmt(flights.avg))")
+            log("   Position:   present=\(posCount)/\(rFrames.count) (\(pct(posCount, rFrames.count))%)")
+            log("   Displacement: pairs=\(regionDisplacements.count), avg=\(fmt(avgDisp))")
+
+            if !regionDisplacements.isEmpty {
+                let sorted = regionDisplacements.sorted()
+                log("     disp min=\(fmt(sorted.first!))  max=\(fmt(sorted.last!))  median=\(fmt(sorted.median))")
+                let highDisp = regionDisplacements.filter { $0 > 0.02 }.count
+                let veryHighDisp = regionDisplacements.filter { $0 > 0.05 }.count
+                log("     disp>0.02: \(highDisp)/\(regionDisplacements.count) (\(pct(highDisp, regionDisplacements.count))%)")
+                log("     disp>0.05: \(veryHighDisp)/\(regionDisplacements.count) (\(pct(veryHighDisp, regionDisplacements.count))%)")
+            }
+
+            allStats.append(RegionStats(
+                name: region.name,
+                motionAvg: motions.avg, motionMin: motions.min()!, motionMax: motions.max()!,
+                posPresenceRate: presenceRate,
+                avgDisplacement: avgDisp,
+                displacementCount: regionDisplacements.count,
+                audioAvg: audios.avg,
+                flightAvg: flights.avg,
+                frameCount: rFrames.count
+            ))
+        }
+
+        // ── Side-by-side comparison table ──
+        log("\n" + String(repeating: "=", count: 110))
+        log("COMPARISON TABLE: Active Play vs. Non-Play Regions")
+        log(String(repeating: "=", count: 110))
+        log("Region                Frames  Mot.Avg  Mot.Min  Mot.Max  Audio    Flight   AvgDisp  Pos%")
+        log(String(repeating: "-", count: 100))
+        for s in allStats {
+            let posP = String(format: "%.0f%%", s.posPresenceRate * 100)
+            log("\(s.name.padding(toLength: 20, withPad: " ", startingAt: 0))  \(String(s.frameCount).padding(toLength: 6, withPad: " ", startingAt: 0))  \(fmt(s.motionAvg))  \(fmt(s.motionMin))  \(fmt(s.motionMax))  \(fmt(s.audioAvg))  \(fmt(s.flightAvg))  \(fmt(s.avgDisplacement))  \(posP)")
+        }
+
+        // ── Candidate signal analysis ──
+        log("\n" + String(repeating: "=", count: 110))
+        log("CANDIDATE SIGNAL ANALYSIS")
+        log(String(repeating: "=", count: 110))
+
+        // Compare active vs non-active
+        let activeRegionNames = Set(["POINT 1 ACTIVE", "POINT 2 ACTIVE"])
+        let nonActiveRegionNames = Set(["BETWEEN POINTS", "POST-POINT IDLE"])
+        let activeStats = allStats.filter { activeRegionNames.contains($0.name) }
+        let nonActiveStats = allStats.filter { nonActiveRegionNames.contains($0.name) }
+
+        if !activeStats.isEmpty && !nonActiveStats.isEmpty {
+            let activeTotalFrames = activeStats.map(\.frameCount).reduce(0, +)
+            let nonActiveTotalFrames = nonActiveStats.map(\.frameCount).reduce(0, +)
+
+            let activeMotionAvg = activeStats.map { $0.motionAvg * Double($0.frameCount) }.reduce(0, +) / Double(activeTotalFrames)
+            let nonActiveMotionAvg = nonActiveStats.map { $0.motionAvg * Double($0.frameCount) }.reduce(0, +) / Double(nonActiveTotalFrames)
+
+            let activeFlightAvg = activeStats.map { $0.flightAvg * Double($0.frameCount) }.reduce(0, +) / Double(activeTotalFrames)
+            let nonActiveFlightAvg = nonActiveStats.map { $0.flightAvg * Double($0.frameCount) }.reduce(0, +) / Double(nonActiveTotalFrames)
+
+            let activeAudioAvg = activeStats.map { $0.audioAvg * Double($0.frameCount) }.reduce(0, +) / Double(activeTotalFrames)
+            let nonActiveAudioAvg = nonActiveStats.map { $0.audioAvg * Double($0.frameCount) }.reduce(0, +) / Double(nonActiveTotalFrames)
+
+            let activePosRate = activeStats.map { $0.posPresenceRate * Double($0.frameCount) }.reduce(0, +) / Double(activeTotalFrames)
+            let nonActivePosRate = nonActiveStats.map { $0.posPresenceRate * Double($0.frameCount) }.reduce(0, +) / Double(nonActiveTotalFrames)
+
+            let activeDispPairs = activeStats.map(\.displacementCount).reduce(0, +)
+            let nonActiveDispPairs = nonActiveStats.map(\.displacementCount).reduce(0, +)
+            let activeDispAvg = activeDispPairs > 0
+                ? activeStats.map { $0.avgDisplacement * Double($0.displacementCount) }.reduce(0, +) / Double(activeDispPairs)
+                : 0.0
+            let nonActiveDispAvg = nonActiveDispPairs > 0
+                ? nonActiveStats.map { $0.avgDisplacement * Double($0.displacementCount) }.reduce(0, +) / Double(nonActiveDispPairs)
+                : 0.0
+
+            log("\n  ACTIVE PLAY (Point 1 + Point 2):")
+            log("    Motion avg:        \(fmt(activeMotionAvg))")
+            log("    Audio avg:         \(fmt(activeAudioAvg))")
+            log("    Flight avg:        \(fmt(activeFlightAvg))")
+            log("    Position presence: \(String(format: "%.1f", activePosRate * 100))%")
+            log("    Displacement avg:  \(fmt(activeDispAvg))  (from \(activeDispPairs) pairs)")
+
+            log("\n  NON-ACTIVE (Between Points + Post-Point Idle):")
+            log("    Motion avg:        \(fmt(nonActiveMotionAvg))")
+            log("    Audio avg:         \(fmt(nonActiveAudioAvg))")
+            log("    Flight avg:        \(fmt(nonActiveFlightAvg))")
+            log("    Position presence: \(String(format: "%.1f", nonActivePosRate * 100))%")
+            log("    Displacement avg:  \(fmt(nonActiveDispAvg))  (from \(nonActiveDispPairs) pairs)")
+
+            log("\n  SIGNAL SEPARATION (active - non-active):")
+            log("    Motion:            \(String(format: "%+.4f", activeMotionAvg - nonActiveMotionAvg))  — \(abs(activeMotionAvg - nonActiveMotionAvg) > 0.02 ? "USEFUL" : "WEAK")")
+            log("    Audio:             \(String(format: "%+.4f", activeAudioAvg - nonActiveAudioAvg))  — \(abs(activeAudioAvg - nonActiveAudioAvg) > 0.02 ? "USEFUL" : "WEAK")")
+            log("    Flight:            \(String(format: "%+.4f", activeFlightAvg - nonActiveFlightAvg))  — \(abs(activeFlightAvg - nonActiveFlightAvg) > 0.02 ? "USEFUL" : "WEAK")")
+            log("    Position presence: \(String(format: "%+.1f", (activePosRate - nonActivePosRate) * 100))pp  — \(abs(activePosRate - nonActivePosRate) > 0.10 ? "USEFUL" : "WEAK")")
+            log("    Displacement:      \(String(format: "%+.4f", activeDispAvg - nonActiveDispAvg))  — \(abs(activeDispAvg - nonActiveDispAvg) > 0.005 ? "USEFUL" : "WEAK")")
+        }
+
+        // ── Sliding window analysis: flight score over 1-second windows ──
+        log("\n" + String(repeating: "=", count: 110))
+        log("SLIDING WINDOW ANALYSIS (1-second windows, 0:00-0:35)")
+        log(String(repeating: "=", count: 110))
+        log("Window      Frames  Motion    Audio   Flight   Pos%  AvgDisp")
+
+        var windowStart: TimeInterval = 0
+        while windowStart < 35 {
+            let windowEnd = windowStart + 1.0
+            let wFrames = rangeFrames.filter { $0.timestamp >= windowStart && $0.timestamp < windowEnd }
+            if !wFrames.isEmpty {
+                let motionAvg = wFrames.map(\.motionScore).avg
+                let audioAvg = wFrames.map(\.audioScore).avg
+                let flightAvg = wFrames.map(\.shuttlecockFlightScore).avg
+                let posCount = wFrames.filter { $0.shuttlecockPosition != nil }.count
+                let posRate = String(format: "%.0f", Double(posCount) / Double(wFrames.count) * 100)
+                let wDisplacements = wFrames.compactMap { frameDisplacements[$0.timestamp] }
+                let avgDisp = wDisplacements.isEmpty ? 0.0 : wDisplacements.avg
+
+                log("\(ts(windowStart))  \(String(wFrames.count).padding(toLength: 6, withPad: " ", startingAt: 0))  \(fmt(motionAvg))  \(fmt(audioAvg))  \(fmt(flightAvg))  \(posRate.padding(toLength: 4, withPad: " ", startingAt: 0))%  \(fmt(avgDisp))")
+            }
+            windowStart += 1.0
+        }
+
+        // Write output
+        try output.write(toFile: outputPath, atomically: true, encoding: .utf8)
+        print("\n>>> Shuttle state analysis written to: \(outputPath)")
+
+        // Trivial assertion so the test "passes"
+        XCTAssertFalse(rangeFrames.isEmpty, "Should have frames in the 0:00-0:35 range")
+    }
+
+    /// All video files to analyze
+    static let allVideos: [(url: URL, cacheName: String)] = [
+        (URL(fileURLWithPath: "/Users/boyuan/Downloads/IMG_8510.MOV"), "IMG_8510_frames.json"),
+        (URL(fileURLWithPath: "/Users/boyuan/Downloads/IMG_6155.MOV"), "IMG_6155_frames.json"),
+        (URL(fileURLWithPath: "/Users/boyuan/Downloads/IMG_6155 2.MOV"), "IMG_6155_2_frames.json"),
+        (URL(fileURLWithPath: "/Users/boyuan/Downloads/IMG_6155 3.MOV"), "IMG_6155_3_frames.json"),
+        (URL(fileURLWithPath: "/Users/boyuan/Downloads/IMG_6156.mov"), "IMG_6156_frames.json"),
+    ]
+
+    /// Extract and cache frames from ALL videos, then dump combined CSV.
+    /// First run: ~17 min per video (68 min total). Subsequent runs: instant (cached).
+    func testExtractAllVideos() async throws {
+        for video in Self.allVideos {
+            let cacheURL = Self.cacheDir.appendingPathComponent(video.cacheName)
+            if FileManager.default.fileExists(atPath: cacheURL.path) {
+                print("✓ \(video.cacheName) already cached")
+                continue
+            }
+            guard FileManager.default.fileExists(atPath: video.url.path) else {
+                print("⚠ \(video.url.lastPathComponent) not found, skipping")
+                continue
+            }
+            print("Extracting \(video.url.lastPathComponent)...")
+            let frames = try await extractFrames(from: video.url)
+            let codable = frames.map { CodableFrame(from: $0) }
+            let data = try JSONEncoder().encode(codable)
+            try data.write(to: cacheURL)
+            print("  Cached \(frames.count) frames to \(video.cacheName) (\(data.count / 1024)KB)")
+        }
+    }
+
+    /// Dumps every frame's raw data + derived features to CSV for signal exploration.
+    /// Open in Excel/Numbers to chart patterns and find new discriminators.
+    /// Includes ALL cached videos with a `video` column.
+    func testDumpFrameCSV() async throws {
+        // Load all available cached videos
+        struct VideoFrames {
+            let name: String
+            let frames: [FeatureFrame]
+        }
+        var allVideoFrames: [VideoFrames] = []
+        for video in Self.allVideos {
+            let cacheURL = Self.cacheDir.appendingPathComponent(video.cacheName)
+            guard FileManager.default.fileExists(atPath: cacheURL.path) else { continue }
+            let data = try Data(contentsOf: cacheURL)
+            let cached = try JSONDecoder().decode([CodableFrame].self, from: data)
+            let frames = cached.map { $0.toFeatureFrame() }
+            let name = video.cacheName.replacingOccurrences(of: "_frames.json", with: "")
+            allVideoFrames.append(VideoFrames(name: name, frames: frames))
+            print("Loaded \(frames.count) frames from \(name)")
+        }
+        XCTAssertFalse(allVideoFrames.isEmpty, "Need at least one cached video")
+
+        // Classify each video independently
+        let segmenter = HybridSegmenter()
+        let config = AnalysisConfig()
+
+        struct LabeledVideoFrames {
+            let name: String
+            let frames: [FeatureFrame]
+            let segments: [TimeSegment]
+        }
+        var labeled: [LabeledVideoFrames] = []
+        for vf in allVideoFrames {
+            let raw = segmenter.classify(frames: vf.frames, config: config)
+            let processed = segmenter.postProcess(segments: raw, frames: vf.frames, config: config)
+            let refined = SegmentUtils.mergeAdjacent(SegmentUtils.removeInvalid(processed), maxGap: 0.5)
+            labeled.append(LabeledVideoFrames(name: vf.name, frames: vf.frames, segments: refined))
+        }
+
+        func labelFor(_ t: TimeInterval, segments: [TimeSegment]) -> String {
+            for seg in segments {
+                if t >= seg.start && t <= seg.end {
+                    return seg.label == .rally ? "rally" : "break"
+                }
+            }
+            return "unknown"
+        }
+
+        // Build CSV with all videos
+        var csv = "video,time,time_fmt,label,motion,audio,flight,has_pos,shuttle_x,shuttle_y,"
+        csv += "displacement,motion_roll5,audio_roll5,motion_roll15,audio_roll15,"
+        csv += "motion_var5,presence_roll10,motion_delta,audio_delta,y_var10\n"
+
+        var totalFrames = 0
+        for vf in labeled {
+            let frames = vf.frames
+            let motionRoll5 = rolling(frames.map(\.motionScore), window: 5)
+            let audioRoll5 = rolling(frames.map(\.audioScore), window: 5)
+            let motionRoll15 = rolling(frames.map(\.motionScore), window: 15)
+            let audioRoll15 = rolling(frames.map(\.audioScore), window: 15)
+            let motionVar5 = rollingVariance(frames.map(\.motionScore), window: 5)
+            var displacements: [Double?] = [nil]
+            for i in 1..<frames.count {
+                if let pos = frames[i].shuttlecockPosition,
+                   let prev = frames[i-1].shuttlecockPosition {
+                    let dx = pos.x - prev.x, dy = pos.y - prev.y
+                    displacements.append(sqrt(dx*dx + dy*dy))
+                } else {
+                    displacements.append(nil)
+                }
+            }
+            let presence = frames.map { $0.shuttlecockPosition != nil ? 1.0 : 0.0 }
+            let presenceRoll10 = rolling(presence, window: 10)
+            var motionDelta: [Double] = [0]
+            for i in 1..<frames.count {
+                motionDelta.append(abs(frames[i].motionScore - frames[i-1].motionScore))
+            }
+            var audioDelta: [Double] = [0]
+            for i in 1..<frames.count {
+                audioDelta.append(abs(frames[i].audioScore - frames[i-1].audioScore))
+            }
+            let yValues = frames.map { $0.shuttlecockPosition?.y ?? 0.5 }
+            let yVar10 = rollingVariance(yValues, window: 10)
+
+            for i in 0..<frames.count {
+                let f = frames[i]
+                let t = f.timestamp
+                let m = Int(t) / 60
+                let s = t - Double(m * 60)
+                let tFmt = String(format: "%d:%05.2f", m, s)
+                let label = labelFor(t, segments: vf.segments)
+                let hasPos = f.shuttlecockPosition != nil ? 1 : 0
+                let sx = f.shuttlecockPosition.map { String(format: "%.4f", $0.x) } ?? ""
+                let sy = f.shuttlecockPosition.map { String(format: "%.4f", $0.y) } ?? ""
+                let disp = displacements[i].map { String(format: "%.4f", $0) } ?? ""
+
+                csv += vf.name + ","
+                csv += String(format: "%.3f", t) + ","
+                csv += tFmt + ","
+                csv += label + ","
+                csv += String(format: "%.4f", f.motionScore) + ","
+                csv += String(format: "%.4f", f.audioScore) + ","
+                csv += String(format: "%.4f", f.shuttlecockFlightScore) + ","
+                csv += "\(hasPos),"
+                csv += sx + ","
+                csv += sy + ","
+                csv += disp + ","
+                csv += String(format: "%.4f", motionRoll5[i]) + ","
+                csv += String(format: "%.4f", audioRoll5[i]) + ","
+                csv += String(format: "%.4f", motionRoll15[i]) + ","
+                csv += String(format: "%.4f", audioRoll15[i]) + ","
+                csv += String(format: "%.6f", motionVar5[i]) + ","
+                csv += String(format: "%.4f", presenceRoll10[i]) + ","
+                csv += String(format: "%.4f", motionDelta[i]) + ","
+                csv += String(format: "%.4f", audioDelta[i]) + ","
+                csv += String(format: "%.6f", yVar10[i]) + "\n"
+            }
+            totalFrames += frames.count
+        }
+
+        let outputPath = "/tmp/badminton_frames.csv"
+        try csv.write(toFile: outputPath, atomically: true, encoding: .utf8)
+        print(">>> CSV written to: \(outputPath) (\(totalFrames) frames from \(labeled.count) videos)")
+    }
+
+    // Rolling average helper
+    private func rolling(_ values: [Double], window: Int) -> [Double] {
+        let halfW = window / 2
+        return values.indices.map { i in
+            let lo = max(0, i - halfW)
+            let hi = min(values.count - 1, i + halfW)
+            let slice = values[lo...hi]
+            return slice.reduce(0, +) / Double(slice.count)
+        }
+    }
+
+    // Rolling variance helper
+    private func rollingVariance(_ values: [Double], window: Int) -> [Double] {
+        let halfW = window / 2
+        return values.indices.map { i in
+            let lo = max(0, i - halfW)
+            let hi = min(values.count - 1, i + halfW)
+            let slice = Array(values[lo...hi])
+            let mean = slice.reduce(0, +) / Double(slice.count)
+            let variance = slice.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(slice.count)
+            return variance
+        }
+    }
+
     // MARK: - Frame Cache
 
     /// Loads cached frames from TestData/ or extracts fresh ones (and caches them).
@@ -252,6 +658,22 @@ final class HybridSegmenterTests: XCTestCase {
         log("Cached \(frames.count) frames to \(cacheURL.lastPathComponent) (\(data.count / 1024)KB)")
 
         return frames
+    }
+
+    /// Extracts frames from any video URL using the ML model.
+    private func extractFrames(from videoURL: URL) async throws -> [FeatureFrame] {
+        guard let modelURL = findCompiledModel() else {
+            XCTFail("TrackNetV3 model not found")
+            return []
+        }
+        let extractor = BasicFeatureExtractor()
+        return try await extractor.extractFeatures(
+            from: videoURL,
+            mlModelURL: nil,
+            progress: nil,
+            calibrationPriors: [],
+            shuttlecockModelURL: modelURL
+        )
     }
 
     // MARK: - Helpers

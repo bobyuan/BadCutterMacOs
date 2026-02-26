@@ -11,7 +11,7 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         // Fallback: adaptive percentile for the continuous motion score distribution
         // Shuttle mode: position-presence combined score is bimodal
         //   rally center ≈ 0.55-0.65, break center ≈ 0.20-0.30
-        let threshold = shuttlePrimary ? 0.42 : percentile(combinedScores, p: config.rallyPercentile)
+        let threshold = shuttlePrimary ? 0.45 : percentile(combinedScores, p: config.rallyPercentile)
         let labels = combinedScores.map { $0 >= threshold ? SegmentLabel.rally : SegmentLabel.betweenPoints }
 
         var segments: [TimeSegment] = []
@@ -67,7 +67,14 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         let postRoll = shuttlePrimary ? 0.5 : config.postRollSeconds
         let preRolled = applyPreRoll(segments: filtered, preRoll: preRoll)
         let postRolled = applyPostRoll(segments: preRolled, postRoll: postRoll)
-        let split = splitLongRallies(segments: postRolled, frames: frames, config: config)
+        // Iterative splitting: first pass may produce sub-rallies still over maxDuration.
+        // Re-run up to 5 times until no further splits occur.
+        var split = postRolled
+        for _ in 0..<5 {
+            let next = splitLongRallies(segments: split, frames: frames, config: config)
+            if next.count == split.count { break }
+            split = next
+        }
 
         // Final cleanup: absorb tiny rally/break fragments, merge consecutive same-label.
         // Shuttle-primary: aggressive dip splitting creates short rally fragments (1-3s)
@@ -100,7 +107,7 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
             // Blend: position presence rate (60%) + motion (30%) + audio (10%)
             let presenceScores = computeShuttlePresenceScores(frames: frames)
             return frames.indices.map { i in
-                min(0.60 * presenceScores[i] + 0.30 * frames[i].motionScore + 0.10 * frames[i].audioScore, 1.0)
+                min(0.70 * presenceScores[i] + 0.20 * frames[i].motionScore + 0.10 * frames[i].audioScore, 1.0)
             }
         } else {
             // Fallback: original motion + audio bonus (no ML data)
@@ -177,18 +184,37 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
             let minDipDur: TimeInterval
 
             if shuttlePrimary {
-                // Shuttle-primary: use motion score for dip detection.
-                // The shuttle may remain visible during breaks, but player motion
-                // clearly drops (0.05-0.08 break vs 0.10-0.25 rally).
-                scores = rallyFrames.map(\.motionScore)
-                // Adaptive threshold: use the rally's own median motion * 0.85.
-                // This catches dips relative to the rally's activity level.
-                // Example: rally with median 0.143 → threshold 0.122 → catches
-                // bird-pickup dips at 0.10-0.13 that a fixed 0.10 would miss.
-                // Floor at 0.10 to avoid splitting on noise in low-motion rallies.
-                let medianMotion = scores.sorted()[scores.count / 2]
-                dipThreshold = max(0.10, medianMotion * 0.85)
-                minDipDur = 1.0
+                // Three complementary dip detectors, OR'd together:
+                //
+                // 1. Presence dip: shuttle disappears from detection (< 0.5)
+                //    Best overall signal (Cohen's d=1.79). Works across all videos.
+                //    Catches pauses where shuttle is off-camera or being picked up.
+                //
+                // 2. Motion dip: players standing still (< 0.09)
+                //    Works in specific camera angles where players appear still.
+                //    Catches pauses where shuttle is visible on ground.
+                //
+                // 3. Audio silence: sustained silence (< 0.10)
+                //    Catches pauses in videos where shuttle is always visible AND
+                //    players keep moving (e.g., IMG_8510: between-point idle has
+                //    motion=0.12-0.15, presence=0.9, but audio=0.000).
+                //
+                // Each detector catches different pause types. Together they provide
+                // coverage across all video types.
+                let presence = rallyFrames.map { $0.shuttlecockPosition != nil ? 1.0 : 0.0 }
+                let presenceRoll10 = rollingAverage(presence, windowSize: 10)
+
+                let motionRoll5 = rollingAverage(rallyFrames.map(\.motionScore), windowSize: 5)
+                let audioRoll3 = rollingAverage(rallyFrames.map(\.audioScore), windowSize: 3)
+
+                scores = (0..<rallyFrames.count).map { i in
+                    let isDip = presenceRoll10[i] < 0.5
+                              || motionRoll5[i] < 0.09
+                              || audioRoll3[i] < 0.10
+                    return isDip ? 0.0 : 1.0
+                }
+                dipThreshold = 0.5
+                minDipDur = 1.5
             } else {
                 let allScores = computeCombinedScores(frames: frames, shuttlePrimary: false, config: config)
                 let classificationThreshold = percentile(allScores, p: config.rallyPercentile)
@@ -197,10 +223,11 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
                 minDipDur = config.minDipDuration
             }
 
-            // Smooth with rolling average to reduce frame-to-frame noise
-            // Shuttle-primary: narrower window (3 frames ≈ 0.6s) to preserve short dips
-            // Fallback: wider window (5 frames ≈ 1s) for noisier motion signal
-            let smoothWindow = shuttlePrimary ? 3 : 5
+            // Smooth with rolling average to reduce frame-to-frame noise.
+            // 5-frame window (≈1s) bridges brief 1-2 frame gaps in the signal.
+            // For shuttle-primary binary dip signal, threshold 0.5 after smoothing
+            // means majority of the window must be dip frames.
+            let smoothWindow = 5
             let smoothed = rollingAverage(scores, windowSize: smoothWindow)
 
             // Find dip regions: contiguous frames below dipScoreThreshold
