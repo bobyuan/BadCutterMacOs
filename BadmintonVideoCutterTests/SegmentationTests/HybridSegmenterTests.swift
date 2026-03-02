@@ -1,6 +1,8 @@
 import XCTest
 @testable import BadmintonVideoCutter
 import CoreML
+import Vision
+import AVFoundation
 
 final class HybridSegmenterTests: XCTestCase {
 
@@ -684,6 +686,248 @@ final class HybridSegmenterTests: XCTestCase {
         let m = Int(t) / 60
         let s = t - Double(m * 60)
         return String(format: "%d:%05.2f", m, s)
+    }
+
+    // MARK: - Body Pose Analysis
+
+    /// Runs VNDetectHumanBodyPoseRequest on video frames and dumps joint data to CSV.
+    /// Purpose: evaluate whether player body pose can distinguish rally vs break
+    /// (ready stance vs walking/relaxed posture).
+    func testBodyPoseAnalysis() async throws {
+        let videoURL = URL(fileURLWithPath: "/Users/boyuan/Downloads/IMG_6156.mov")
+        guard FileManager.default.fileExists(atPath: videoURL.path) else {
+            XCTFail("Video not found: \(videoURL.path)")
+            return
+        }
+
+        let asset = AVURLAsset(url: videoURL)
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            XCTFail("No video track")
+            return
+        }
+        let frameRate = try await Double(videoTrack.load(.nominalFrameRate))
+        let totalDuration = try await asset.load(.duration).seconds
+
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(
+            track: videoTrack,
+            outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        )
+        output.alwaysCopiesSampleData = false
+        reader.add(output)
+
+        // Sample every ~200ms to match feature extractor rate
+        let frameSkip = max(1, Int(frameRate * 0.2))
+
+        // Joints we care about for "ready stance" detection
+        // Vision coords: origin bottom-left, y goes UP
+        let jointNames: [VNHumanBodyPoseObservation.JointName] = [
+            .nose, .neck,
+            .leftShoulder, .rightShoulder,
+            .leftElbow, .rightElbow,
+            .leftWrist, .rightWrist,
+            .leftHip, .rightHip,
+            .leftKnee, .rightKnee,
+            .leftAnkle, .rightAnkle,
+        ]
+        let jointLabels = [
+            "nose", "neck",
+            "lShoulder", "rShoulder",
+            "lElbow", "rElbow",
+            "lWrist", "rWrist",
+            "lHip", "rHip",
+            "lKnee", "rKnee",
+            "lAnkle", "rAnkle",
+        ]
+
+        // CSV header
+        var csv = "time,time_fmt,num_persons"
+        for p in 0..<2 { // Track up to 2 persons
+            for label in jointLabels {
+                csv += ",p\(p)_\(label)_x,p\(p)_\(label)_y,p\(p)_\(label)_conf"
+            }
+        }
+        // Derived scores per person
+        for p in 0..<2 {
+            csv += ",p\(p)_kneeBend"    // knee angle (smaller = more bent)
+            csv += ",p\(p)_hipHeight"   // hip Y relative to ankle Y
+            csv += ",p\(p)_stanceWidth" // ankle spread / shoulder width
+            csv += ",p\(p)_armRaise"    // wrist Y relative to shoulder Y
+            csv += ",p\(p)_torsoLean"   // how much the torso leans forward
+        }
+        csv += ",avgKneeBend,avgHipHeight,avgStanceWidth,avgArmRaise"
+        csv += "\n"
+
+        var frameIndex = 0
+        var processedCount = 0
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        reader.startReading()
+        while reader.status == .reading {
+            guard let sample = output.copyNextSampleBuffer(),
+                  let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+
+            let timestamp = CMSampleBufferGetPresentationTimeStamp(sample).seconds
+            frameIndex += 1
+            guard frameIndex % frameSkip == 0 else { continue }
+
+            // Run body pose detection
+            let request = VNDetectHumanBodyPoseRequest()
+            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+            try handler.perform([request])
+
+            let observations = request.results ?? []
+            // Sort by nose/hip Y position (lower Y in Vision coords = lower on screen = closer to camera)
+            // This provides consistent ordering of near-side vs far-side player
+            let sortedObs: [VNHumanBodyPoseObservation] = observations.compactMap { obs -> (VNHumanBodyPoseObservation, CGFloat)? in
+                if let hip = try? obs.recognizedPoint(.root) { return (obs, hip.location.y) }
+                return nil
+            }.sorted { $0.1 < $1.1 }.map(\.0)
+
+            let m = Int(timestamp) / 60
+            let s = timestamp - Double(m * 60)
+            let tFmt = String(format: "%d:%05.2f", m, s)
+
+            csv += String(format: "%.3f", timestamp) + ","
+            csv += tFmt + ","
+            csv += "\(min(sortedObs.count, 2))"
+
+            // Extract joint positions for up to 2 persons
+            var personScores: [(kneeBend: Double, hipHeight: Double, stanceWidth: Double, armRaise: Double)] = []
+
+            for p in 0..<2 {
+                if p < sortedObs.count {
+                    let obs = sortedObs[p]
+                    var joints: [String: (x: Double, y: Double, conf: Double)] = [:]
+
+                    for (i, jn) in jointNames.enumerated() {
+                        if let point = try? obs.recognizedPoint(jn), point.confidence > 0.1 {
+                            csv += String(format: ",%.4f,%.4f,%.3f", point.location.x, point.location.y, point.confidence)
+                            joints[jointLabels[i]] = (x: Double(point.location.x), y: Double(point.location.y), conf: Double(point.confidence))
+                        } else {
+                            csv += ",,,"
+                        }
+                    }
+
+                    // Compute derived scores
+                    let kneeBend = computeKneeBend(joints: joints)
+                    let hipHeight = computeHipHeight(joints: joints)
+                    let stanceWidth = computeStanceWidth(joints: joints)
+                    let armRaise = computeArmRaise(joints: joints)
+                    let torsoLean = computeTorsoLean(joints: joints)
+
+                    csv += String(format: ",%.4f", kneeBend)
+                    csv += String(format: ",%.4f", hipHeight)
+                    csv += String(format: ",%.4f", stanceWidth)
+                    csv += String(format: ",%.4f", armRaise)
+                    csv += String(format: ",%.4f", torsoLean)
+
+                    if kneeBend > 0 {
+                        personScores.append((kneeBend: kneeBend, hipHeight: hipHeight, stanceWidth: stanceWidth, armRaise: armRaise))
+                    }
+                } else {
+                    // No person detected in this slot
+                    for _ in jointNames { csv += ",,," }
+                    csv += ",,,,,"
+                }
+            }
+
+            // Average scores across detected persons
+            if !personScores.isEmpty {
+                let avgKnee = personScores.map(\.kneeBend).avg
+                let avgHip = personScores.map(\.hipHeight).avg
+                let avgStance = personScores.map(\.stanceWidth).avg
+                let avgArm = personScores.map(\.armRaise).avg
+                csv += String(format: ",%.4f,%.4f,%.4f,%.4f", avgKnee, avgHip, avgStance, avgArm)
+            } else {
+                csv += ",,,,"
+            }
+            csv += "\n"
+
+            processedCount += 1
+            if processedCount % 100 == 0 {
+                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                let rate = Double(processedCount) / elapsed
+                let eta = (totalDuration / 0.2 - Double(processedCount)) / rate
+                print(String(format: "Processed %d frames (%.1fs) — %.1f frames/s, ETA %.0fs", processedCount, timestamp, rate, eta))
+            }
+        }
+
+        let outputPath = "/tmp/body_pose_6156.csv"
+        try csv.write(toFile: outputPath, atomically: true, encoding: .utf8)
+
+        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+        print(">>> Body pose CSV written to: \(outputPath)")
+        print(">>> \(processedCount) frames in \(String(format: "%.1f", elapsed))s (\(String(format: "%.1f", Double(processedCount) / elapsed)) fps)")
+    }
+
+    // MARK: - Body Pose Derived Scores
+
+    /// Knee bend: ratio of hip-to-ankle distance vs hip-to-knee + knee-to-ankle.
+    /// 1.0 = straight legs, <1.0 = bent knees (ready stance).
+    /// Returns 0 if joints missing.
+    private func computeKneeBend(joints: [String: (x: Double, y: Double, conf: Double)]) -> Double {
+        guard let lHip = joints["lHip"], let rHip = joints["rHip"],
+              let lKnee = joints["lKnee"], let rKnee = joints["rKnee"],
+              let lAnkle = joints["lAnkle"], let rAnkle = joints["rAnkle"] else { return 0 }
+
+        func dist(_ a: (x: Double, y: Double, conf: Double), _ b: (x: Double, y: Double, conf: Double)) -> Double {
+            sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2))
+        }
+
+        let leftDirect = dist(lHip, lAnkle)
+        let leftVia = dist(lHip, lKnee) + dist(lKnee, lAnkle)
+        let rightDirect = dist(rHip, rAnkle)
+        let rightVia = dist(rHip, rKnee) + dist(rKnee, rAnkle)
+
+        let leftRatio = leftVia > 0 ? leftDirect / leftVia : 1.0
+        let rightRatio = rightVia > 0 ? rightDirect / rightVia : 1.0
+        return (leftRatio + rightRatio) / 2.0
+    }
+
+    /// Hip height: average hip Y relative to ankle Y (in Vision coords, higher Y = higher on screen).
+    /// Larger = standing tall, smaller = crouched.
+    private func computeHipHeight(joints: [String: (x: Double, y: Double, conf: Double)]) -> Double {
+        guard let lHip = joints["lHip"], let rHip = joints["rHip"],
+              let lAnkle = joints["lAnkle"], let rAnkle = joints["rAnkle"] else { return 0 }
+        let hipY = (lHip.y + rHip.y) / 2
+        let ankleY = (lAnkle.y + rAnkle.y) / 2
+        return hipY - ankleY // positive = hip above ankles
+    }
+
+    /// Stance width: ankle spread normalized by shoulder width.
+    /// Wider stance (> 1.0) = ready position.
+    private func computeStanceWidth(joints: [String: (x: Double, y: Double, conf: Double)]) -> Double {
+        guard let lShoulder = joints["lShoulder"], let rShoulder = joints["rShoulder"],
+              let lAnkle = joints["lAnkle"], let rAnkle = joints["rAnkle"] else { return 0 }
+        let shoulderWidth = abs(lShoulder.x - rShoulder.x)
+        let ankleWidth = abs(lAnkle.x - rAnkle.x)
+        return shoulderWidth > 0.01 ? ankleWidth / shoulderWidth : 0
+    }
+
+    /// Arm raise: average wrist Y relative to shoulder Y.
+    /// Positive = wrists above shoulders (racket up), negative = arms down.
+    private func computeArmRaise(joints: [String: (x: Double, y: Double, conf: Double)]) -> Double {
+        guard let lShoulder = joints["lShoulder"], let rShoulder = joints["rShoulder"],
+              let lWrist = joints["lWrist"], let rWrist = joints["rWrist"] else { return 0 }
+        let leftRaise = lWrist.y - lShoulder.y
+        let rightRaise = rWrist.y - rShoulder.y
+        return (leftRaise + rightRaise) / 2.0
+    }
+
+    /// Torso lean: angle of the torso from vertical.
+    /// Computed as hip midpoint X offset from shoulder midpoint X.
+    /// Larger magnitude = more lean.
+    private func computeTorsoLean(joints: [String: (x: Double, y: Double, conf: Double)]) -> Double {
+        guard let lShoulder = joints["lShoulder"], let rShoulder = joints["rShoulder"],
+              let lHip = joints["lHip"], let rHip = joints["rHip"] else { return 0 }
+        let shoulderMidX = (lShoulder.x + rShoulder.x) / 2
+        let hipMidX = (lHip.x + rHip.x) / 2
+        let shoulderMidY = (lShoulder.y + rShoulder.y) / 2
+        let hipMidY = (lHip.y + rHip.y) / 2
+        let dy = shoulderMidY - hipMidY
+        guard dy > 0.01 else { return 0 }
+        return abs(shoulderMidX - hipMidX) / dy
     }
 
     /// Find the compiled TrackNetV3 model in DerivedData or the project

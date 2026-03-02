@@ -7,11 +7,11 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         let shuttlePrimary = useShuttlePrimary(frames: frames)
         let combinedScores = computeCombinedScores(frames: frames, shuttlePrimary: shuttlePrimary, config: config)
 
-        // Shuttle-primary: fixed threshold (displacement-based signal is bimodal)
-        // Fallback: adaptive percentile for the continuous motion score distribution
-        // Shuttle mode: position-presence combined score is bimodal
-        //   rally center ≈ 0.55-0.65, break center ≈ 0.20-0.30
-        let threshold = shuttlePrimary ? 0.45 : percentile(combinedScores, p: config.rallyPercentile)
+        // Shuttle-primary: Otsu's method finds optimal binary split for the bimodal
+        // score distribution. Adapts per-video (e.g. ~0.37 for both IMG_8510 and IMG_6156).
+        // Clamped to [0.25, 0.55] to prevent pathological edge cases.
+        // Fallback: adaptive percentile for the continuous motion score distribution.
+        let threshold = shuttlePrimary ? otsuThreshold(combinedScores, min: 0.25, max: 0.55) : percentile(combinedScores, p: config.rallyPercentile)
         let labels = combinedScores.map { $0 >= threshold ? SegmentLabel.rally : SegmentLabel.betweenPoints }
 
         var segments: [TimeSegment] = []
@@ -101,13 +101,16 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     /// Falls back to original motion+audio formula when no ML data.
     private func computeCombinedScores(frames: [FeatureFrame], shuttlePrimary: Bool, config: AnalysisConfig) -> [Double] {
         if shuttlePrimary {
-            // Use shuttle position gaps as the primary signal.
-            // During breaks, shuttle has no position for extended stretches.
-            // During rallies, positions are present most frames.
-            // Blend: position presence rate (60%) + motion (30%) + audio (10%)
+            // Blend: presence (40%) + flight-motion (30%) + motion (20%) + audio (10%)
+            // Presence captures shuttle disappearance during breaks.
+            // Flight-motion (flightScore - motionScore, smoothed) captures rallies where
+            // shuttle is confidently detected with low player motion. Complementary to
+            // presence: strong for IMG_6156 (d=1.93) where presence is weak (d=0.54),
+            // and presence is strong for IMG_8510 (d=1.79) where flight-motion is weak.
             let presenceScores = computeShuttlePresenceScores(frames: frames)
+            let flightMotionScores = computeFlightMotionScores(frames: frames)
             return frames.indices.map { i in
-                min(0.70 * presenceScores[i] + 0.20 * frames[i].motionScore + 0.10 * frames[i].audioScore, 1.0)
+                min(0.40 * presenceScores[i] + 0.30 * flightMotionScores[i] + 0.20 * frames[i].motionScore + 0.10 * frames[i].audioScore, 1.0)
             }
         } else {
             // Fallback: original motion + audio bonus (no ML data)
@@ -139,6 +142,15 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
             let window = presence[lo...hi]
             return window.reduce(0, +) / Double(window.count)
         }
+    }
+
+    /// Computes per-frame flight-motion score: how strongly the shuttle is detected
+    /// relative to player motion. High values (shuttle visible + low motion) indicate
+    /// active rally; low values (shuttle absent or correlating with motion) indicate breaks.
+    /// Smoothed with 15-frame rolling average (~3s at 5fps) for stability.
+    private func computeFlightMotionScores(frames: [FeatureFrame]) -> [Double] {
+        let raw = frames.map { max(0.0, $0.shuttlecockFlightScore - $0.motionScore) }
+        return rollingAverage(raw, windowSize: 15)
     }
 
     /// Returns true when ML shuttle position data is meaningfully present.
@@ -184,7 +196,7 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
             let minDipDur: TimeInterval
 
             if shuttlePrimary {
-                // Three complementary dip detectors, OR'd together:
+                // Four complementary dip detectors, OR'd together:
                 //
                 // 1. Presence dip: shuttle disappears from detection (< 0.5)
                 //    Best overall signal (Cohen's d=1.79). Works across all videos.
@@ -199,6 +211,11 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
                 //    players keep moving (e.g., IMG_8510: between-point idle has
                 //    motion=0.12-0.15, presence=0.9, but audio=0.000).
                 //
+                // 4. Flight-motion dip: flightScore - motionScore drops below
+                //    adaptive threshold (70% of rally median). Catches pauses in
+                //    videos like IMG_6156 where shuttle stays visible but flight
+                //    confidence drops during breaks.
+                //
                 // Each detector catches different pause types. Together they provide
                 // coverage across all video types.
                 let presence = rallyFrames.map { $0.shuttlecockPosition != nil ? 1.0 : 0.0 }
@@ -207,10 +224,22 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
                 let motionRoll5 = rollingAverage(rallyFrames.map(\.motionScore), windowSize: 5)
                 let audioRoll3 = rollingAverage(rallyFrames.map(\.audioScore), windowSize: 3)
 
+                let flightMotionRaw = rallyFrames.map { max(0.0, $0.shuttlecockFlightScore - $0.motionScore) }
+                let flightMotionRoll15 = rollingAverage(flightMotionRaw, windowSize: 15)
+
+                // Adaptive threshold: 70% of this rally's median flight-motion,
+                // floored at 0.10. For IMG_6156 (median ~0.33): threshold ~0.23,
+                // breaks at 0.087 caught. For IMG_8510 (median ~0.41): threshold ~0.29,
+                // breaks at 0.35 NOT caught (no false dips).
+                let sortedFM = flightMotionRoll15.sorted()
+                let medianFM = sortedFM.isEmpty ? 0.0 : sortedFM[sortedFM.count / 2]
+                let fmDipThreshold = max(0.10, medianFM * 0.7)
+
                 scores = (0..<rallyFrames.count).map { i in
                     let isDip = presenceRoll10[i] < 0.5
                               || motionRoll5[i] < 0.09
                               || audioRoll3[i] < 0.10
+                              || flightMotionRoll15[i] < fmDipThreshold
                     return isDip ? 0.0 : 1.0
                 }
                 dipThreshold = 0.5
@@ -450,6 +479,46 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     private func confidence(_ values: [Double]) -> Double {
         guard !values.isEmpty else { return 0.5 }
         return min(max(values.reduce(0, +) / Double(values.count), 0.05), 0.99)
+    }
+
+    /// Otsu's method: finds the threshold that maximizes between-class variance,
+    /// giving the optimal binary split of a bimodal distribution.
+    /// Result is clamped to [min, max] to prevent pathological edge cases.
+    private func otsuThreshold(_ values: [Double], min minVal: Double, max maxVal: Double) -> Double {
+        guard values.count >= 2 else { return (minVal + maxVal) / 2.0 }
+
+        let sorted = values.sorted()
+        let n = Double(values.count)
+        let totalSum = sorted.reduce(0, +)
+
+        var bestThreshold = (minVal + maxVal) / 2.0
+        var bestVariance = -1.0
+
+        var weightBg = 0.0
+        var sumBg = 0.0
+
+        for i in 0..<sorted.count - 1 {
+            weightBg += 1.0
+            sumBg += sorted[i]
+
+            let weightFg = n - weightBg
+            if weightFg == 0 { continue }
+
+            let meanBg = sumBg / weightBg
+            let meanFg = (totalSum - sumBg) / weightFg
+
+            let variance = weightBg * weightFg * (meanBg - meanFg) * (meanBg - meanFg)
+
+            // Use midpoint between current and next value as candidate threshold
+            let candidate = (sorted[i] + sorted[i + 1]) / 2.0
+
+            if variance > bestVariance {
+                bestVariance = variance
+                bestThreshold = candidate
+            }
+        }
+
+        return Swift.min(Swift.max(bestThreshold, minVal), maxVal)
     }
 
     private func percentile(_ values: [Double], p: Double) -> Double {

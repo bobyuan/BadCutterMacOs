@@ -91,6 +91,15 @@ struct TimelineTabView: View {
                     .frame(height: 30)
                 }
 
+                // Horizontal scrollbar (visible when zoomed in)
+                if viewport.zoom > 1.0 {
+                    TimelineScrollbar(
+                        viewport: $viewport,
+                        totalDuration: appState.videoMetadata?.duration ?? appState.segments.last?.end ?? 1
+                    )
+                    .frame(height: 12)
+                }
+
                 // Zoom controls
                 HStack {
                     Button(action: { viewport.zoomOut(around: playheadTime) }) {
@@ -257,6 +266,10 @@ struct ConfidenceGraphView: View {
     let viewport: TimelineViewport
     let playheadTime: TimeInterval
 
+    @State private var showMotion = true
+    @State private var showAudio = true
+    @State private var showShuttle = true
+
     var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
@@ -268,22 +281,28 @@ struct ConfidenceGraphView: View {
                     .fill(Color.gray.opacity(0.1))
 
                 // Motion line (blue)
-                Path { path in
-                    drawLine(path: &path, keyPath: \.motionScore, width: width, height: height, color: .blue)
+                if showMotion {
+                    Path { path in
+                        drawLine(path: &path, keyPath: \.motionScore, width: width, height: height, color: .blue)
+                    }
+                    .stroke(Color.blue.opacity(0.7), lineWidth: 1.5)
                 }
-                .stroke(Color.blue.opacity(0.7), lineWidth: 1.5)
 
                 // Audio line (orange)
-                Path { path in
-                    drawLine(path: &path, keyPath: \.audioScore, width: width, height: height, color: .orange)
+                if showAudio {
+                    Path { path in
+                        drawLine(path: &path, keyPath: \.audioScore, width: width, height: height, color: .orange)
+                    }
+                    .stroke(Color.orange.opacity(0.7), lineWidth: 1.5)
                 }
-                .stroke(Color.orange.opacity(0.7), lineWidth: 1.5)
 
                 // Shuttlecock flight line (green)
-                Path { path in
-                    drawLine(path: &path, keyPath: \.shuttlecockFlightScore, width: width, height: height, color: .green)
+                if showShuttle {
+                    Path { path in
+                        drawLine(path: &path, keyPath: \.shuttlecockFlightScore, width: width, height: height, color: .green)
+                    }
+                    .stroke(Color.green.opacity(0.7), lineWidth: 1.5)
                 }
-                .stroke(Color.green.opacity(0.7), lineWidth: 1.5)
 
                 // Playhead
                 let px = timeToX(playheadTime, width: width)
@@ -292,24 +311,31 @@ struct ConfidenceGraphView: View {
                     .frame(width: 1)
                     .offset(x: px)
 
-                // Legend
+                // Legend (clickable toggles)
                 HStack(spacing: 8) {
-                    HStack(spacing: 3) {
-                        RoundedRectangle(cornerRadius: 1).fill(.blue.opacity(0.7)).frame(width: 12, height: 2)
-                        Text("Motion").font(.caption2)
-                    }
-                    HStack(spacing: 3) {
-                        RoundedRectangle(cornerRadius: 1).fill(.orange.opacity(0.7)).frame(width: 12, height: 2)
-                        Text("Audio").font(.caption2)
-                    }
-                    HStack(spacing: 3) {
-                        RoundedRectangle(cornerRadius: 1).fill(.green.opacity(0.7)).frame(width: 12, height: 2)
-                        Text("Shuttle").font(.caption2)
-                    }
+                    legendToggle(label: "Motion", color: .blue, isOn: $showMotion)
+                    legendToggle(label: "Audio", color: .orange, isOn: $showAudio)
+                    legendToggle(label: "Shuttle", color: .green, isOn: $showShuttle)
                 }
                 .padding(4)
             }
         }
+    }
+
+    private func legendToggle(label: String, color: Color, isOn: Binding<Bool>) -> some View {
+        Button {
+            isOn.wrappedValue.toggle()
+        } label: {
+            HStack(spacing: 3) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(color.opacity(isOn.wrappedValue ? 0.7 : 0.2))
+                    .frame(width: 12, height: 2)
+                Text(label)
+                    .font(.caption2)
+                    .foregroundStyle(isOn.wrappedValue ? .primary : .secondary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func drawLine(path: inout Path, keyPath: KeyPath<FeatureFrame, Double>, width: CGFloat, height: CGFloat, color: Color) {
@@ -491,6 +517,63 @@ extension View {
 }
 
 // MARK: - Minimap
+
+// MARK: - Horizontal Scrollbar
+
+struct TimelineScrollbar: View {
+    @Binding var viewport: TimelineViewport
+    let totalDuration: TimeInterval
+
+    @State private var isDragging = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let trackWidth = geo.size.width
+            let thumbFraction = CGFloat(viewport.visibleDuration / max(totalDuration, 1))
+            let thumbWidth = max(30, trackWidth * thumbFraction)
+            let scrollableWidth = trackWidth - thumbWidth
+            let thumbOffset = totalDuration > viewport.visibleDuration
+                ? CGFloat(viewport.visibleStart / (totalDuration - viewport.visibleDuration)) * scrollableWidth
+                : 0
+
+            ZStack(alignment: .leading) {
+                // Track
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.gray.opacity(0.15))
+
+                // Thumb
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.gray.opacity(isDragging ? 0.6 : 0.4))
+                    .frame(width: thumbWidth)
+                    .offset(x: thumbOffset)
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                isDragging = true
+                                let newOffset = max(0, min(scrollableWidth, thumbOffset + value.translation.width))
+                                let fraction = scrollableWidth > 0 ? Double(newOffset / scrollableWidth) : 0
+                                let maxStart = totalDuration - viewport.visibleDuration
+                                let newStart = max(0, min(maxStart, fraction * maxStart))
+                                viewport.visibleStart = newStart
+                                viewport.visibleEnd = newStart + viewport.visibleDuration
+                            }
+                            .onEnded { _ in
+                                isDragging = false
+                            }
+                    )
+            }
+            // Click on track to jump
+            .contentShape(Rectangle())
+            .onTapGesture { location in
+                let fraction = Double(location.x / trackWidth)
+                let maxStart = totalDuration - viewport.visibleDuration
+                let newStart = max(0, min(maxStart, fraction * maxStart))
+                viewport.visibleStart = newStart
+                viewport.visibleEnd = newStart + viewport.visibleDuration
+            }
+        }
+    }
+}
 
 // MARK: - Scroll Wheel Handler (macOS trackpad / mouse wheel)
 
