@@ -196,28 +196,11 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
             let minDipDur: TimeInterval
 
             if shuttlePrimary {
-                // Four complementary dip detectors, OR'd together:
-                //
-                // 1. Presence dip: shuttle disappears from detection (< 0.5)
-                //    Best overall signal (Cohen's d=1.79). Works across all videos.
-                //    Catches pauses where shuttle is off-camera or being picked up.
-                //
-                // 2. Motion dip: players standing still (< 0.09)
-                //    Works in specific camera angles where players appear still.
-                //    Catches pauses where shuttle is visible on ground.
-                //
-                // 3. Audio silence: sustained silence (< 0.10)
-                //    Catches pauses in videos where shuttle is always visible AND
-                //    players keep moving (e.g., IMG_8510: between-point idle has
-                //    motion=0.12-0.15, presence=0.9, but audio=0.000).
-                //
-                // 4. Flight-motion dip: flightScore - motionScore drops below
-                //    adaptive threshold (70% of rally median). Catches pauses in
-                //    videos like IMG_6156 where shuttle stays visible but flight
-                //    confidence drops during breaks.
-                //
-                // Each detector catches different pause types. Together they provide
-                // coverage across all video types.
+                // Combined continuous dip score: normalize each signal within the
+                // rally's own range, then weight-combine. Catches subtle breaks where
+                // ALL signals dip partially but none crosses its individual threshold.
+                // E.g., presence=0.55, FM=0.28, motion=0.24, audio=0.37 — no single
+                // binary detector fires, but the combined normalized score is low.
                 let presence = rallyFrames.map { $0.shuttlecockPosition != nil ? 1.0 : 0.0 }
                 let presenceRoll10 = rollingAverage(presence, windowSize: 10)
 
@@ -227,23 +210,36 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
                 let flightMotionRaw = rallyFrames.map { max(0.0, $0.shuttlecockFlightScore - $0.motionScore) }
                 let flightMotionRoll15 = rollingAverage(flightMotionRaw, windowSize: 15)
 
-                // Adaptive threshold: 70% of this rally's median flight-motion,
-                // floored at 0.10. For IMG_6156 (median ~0.33): threshold ~0.23,
-                // breaks at 0.087 caught. For IMG_8510 (median ~0.41): threshold ~0.29,
-                // breaks at 0.35 NOT caught (no false dips).
-                let sortedFM = flightMotionRoll15.sorted()
-                let medianFM = sortedFM.isEmpty ? 0.0 : sortedFM[sortedFM.count / 2]
-                let fmDipThreshold = max(0.10, medianFM * 0.7)
+                let presNorm = normalizeToRange(presenceRoll10)
+                let fmNorm = normalizeToRange(flightMotionRoll15)
+                let motionNorm = normalizeToRange(motionRoll5)
+                let audioNorm = normalizeToRange(audioRoll3)
 
+                // dipScore: high = likely break, low = likely rally
+                // Invert so low = dip, high = active (consistent with findDips)
                 scores = (0..<rallyFrames.count).map { i in
-                    let isDip = presenceRoll10[i] < 0.5
-                              || motionRoll5[i] < 0.09
-                              || audioRoll3[i] < 0.10
-                              || flightMotionRoll15[i] < fmDipThreshold
-                    return isDip ? 0.0 : 1.0
+                    let dipScore = 0.35 * (1 - presNorm[i])
+                                 + 0.30 * (1 - fmNorm[i])
+                                 + 0.20 * (1 - motionNorm[i])
+                                 + 0.15 * (1 - audioNorm[i])
+                    return 1.0 - dipScore
                 }
-                dipThreshold = 0.5
-                minDipDur = 1.5
+
+                // Progressive splitting: scale sensitivity by duration.
+                // Longer rallies almost certainly contain missed breaks.
+                // 15-20s: standard (0.50 / 1.5s)
+                // 20-30s: more sensitive (0.55 / 1.2s)
+                // 30s+:   aggressive (0.60 / 1.0s)
+                if segment.duration > 30 {
+                    dipThreshold = 0.60
+                    minDipDur = 1.0
+                } else if segment.duration > 20 {
+                    dipThreshold = 0.55
+                    minDipDur = 1.2
+                } else {
+                    dipThreshold = 0.50
+                    minDipDur = 1.5
+                }
             } else {
                 let allScores = computeCombinedScores(frames: frames, shuttlePrimary: false, config: config)
                 let classificationThreshold = percentile(allScores, p: config.rallyPercentile)
@@ -278,6 +274,16 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         }
 
         return result
+    }
+
+    /// Normalizes values to [0, 1] within their own range (min→0, max→1).
+    /// If the range is negligible (<0.01), returns 0.5 for all values.
+    private func normalizeToRange(_ values: [Double]) -> [Double] {
+        let lo = values.min() ?? 0
+        let hi = values.max() ?? 1
+        let range = hi - lo
+        guard range > 0.01 else { return values.map { _ in 0.5 } }
+        return values.map { ($0 - lo) / range }
     }
 
     private func rollingAverage(_ values: [Double], windowSize: Int) -> [Double] {
