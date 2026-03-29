@@ -11,12 +11,11 @@
 		057C041BB97EB0EC320A1F6C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957CDC923188260D7B13CDCA /* ContentView.swift */; };
 		05B119B97AA1079F3E163E2E /* AudioAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EED0ED50CA52374047619D0 /* AudioAnalyzer.swift */; };
 		21BB9C29BC55D238F9AFDE6D /* HybridSegmenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */; };
-		3F734987EE905E28AFC412EC /* ModelsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65109313715AF95F5A2539E9 /* ModelsTabView.swift */; };
 		43E222E482AA3DC63053D866 /* Protocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD050C783FA64A3D9E43626 /* Protocols.swift */; };
 		461B17FEAE06F9417831C5A8 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0C4A842284009ED183073A /* AppState.swift */; };
 		4DF170D04C5FF1F54531E461 /* HitClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BC836680D0DE302C08726D8 /* HitClassifier.swift */; };
 		5CC3249F1F265E88D6A1744B /* HitModelTrainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6304677A7DE242E484CC7FA /* HitModelTrainer.swift */; };
-		5CC65F506957B93EA825D6EC /* AnalysisTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C20D289B5654F603E94ADD /* AnalysisTabView.swift */; };
+		5CC65F506957B93EA825D6EC /* VideosTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C20D289B5654F603E94ADD /* VideosTabView.swift */; };
 		5CC8F05945B3C9D77742DFA8 /* ModelPackageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44452A77F3373C5C02934EAD /* ModelPackageService.swift */; };
 		5CEC09D108C652EB664D8504 /* BasicFeatureExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */; };
 		7F3A61D8E4B925C0A8D2F146 /* ShuttlecockDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4E917A3D62C8F0E5A1B73D9 /* ShuttlecockDetector.swift */; };
@@ -36,7 +35,6 @@
 		BF30AA0612CF606C78F2567C /* GameDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA70BA0C88B15F75F25CB68 /* GameDetector.swift */; };
 		C4A2EC6CA9A36286981883AF /* VideoPlayerPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B5A6B029900FB0A518C78A /* VideoPlayerPane.swift */; };
 		C5319294A168FCB7B15C7A7B /* ModelManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D714636820FFCF947786C2A /* ModelManifest.swift */; };
-		D4973A5937F5C221C7F1D706 /* ImportTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D69153127295D83175C35C /* ImportTabView.swift */; };
 		D6C230CBBDF6C4E87754EA88 /* RemovalStatsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BE7EE26D012CA27654D4FA8 /* RemovalStatsTabView.swift */; };
 		D8B9C0E1F2A3B4C5D6E7F8A9 /* ShuttlecockDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A8B9D0E1F2A3B4C5D6E7F8 /* ShuttlecockDetectorTests.swift */; };
 		DA23C2E564F4042D81AF775B /* BasicFeatureExtractorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE4430931B9FFC0939EFE86 /* BasicFeatureExtractorTests.swift */; };
@@ -45,6 +43,7 @@
 		B3C4D5E6F7A8B9C0D1E2F3A4 /* TrackNetV3.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* TrackNetV3.mlpackage */; };
 		F4A5B6C7D8E9F0A1B2C3D4E5 /* TrajectoryAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */; };
 		A5B6C7D8E9F0A1B2C3D4E5F6 /* TrajectoryAnalyzerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */; };
+		B1C2D3E4F5A6B7C8D9E0F1A2 /* TrainingPoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -66,7 +65,6 @@
 		38C08605E790A4BDAAB0E0A6 /* AnalysisPipelineImpl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisPipelineImpl.swift; sourceTree = "<group>"; };
 		44452A77F3373C5C02934EAD /* ModelPackageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPackageService.swift; sourceTree = "<group>"; };
 		4E631C17014F8A2AD77CAA9F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		65109313715AF95F5A2539E9 /* ModelsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsTabView.swift; sourceTree = "<group>"; };
 		68BBA7E7B35467555BBC16BB /* BadmintonVideoCutterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BadmintonVideoCutterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6AE4430931B9FFC0939EFE86 /* BasicFeatureExtractorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicFeatureExtractorTests.swift; sourceTree = "<group>"; };
 		738158B2DFF9E1B1696E9C94 /* PointListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointListView.swift; sourceTree = "<group>"; };
@@ -79,8 +77,7 @@
 		9BD050C783FA64A3D9E43626 /* Protocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocols.swift; sourceTree = "<group>"; };
 		A5F112338C862B9F2F8A11AA /* CalibrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalibrationView.swift; sourceTree = "<group>"; };
 		A6304677A7DE242E484CC7FA /* HitModelTrainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitModelTrainer.swift; sourceTree = "<group>"; };
-		A9D69153127295D83175C35C /* ImportTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportTabView.swift; sourceTree = "<group>"; };
-		B5C20D289B5654F603E94ADD /* AnalysisTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisTabView.swift; sourceTree = "<group>"; };
+		B5C20D289B5654F603E94ADD /* VideosTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideosTabView.swift; sourceTree = "<group>"; };
 		C29DB557E601829A44CF1A85 /* BadmintonVideoCutterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BadmintonVideoCutterApp.swift; sourceTree = "<group>"; };
 		C7A8B9D0E1F2A3B4C5D6E7F8 /* ShuttlecockDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShuttlecockDetectorTests.swift; sourceTree = "<group>"; };
 		CB2C787EE892C2DD3A4BB3AB /* SegmentUtilsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentUtilsTests.swift; sourceTree = "<group>"; };
@@ -99,6 +96,7 @@
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* TrackNetV3.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = TrackNetV3.mlpackage; sourceTree = "<group>"; };
 		D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrajectoryAnalyzer.swift; sourceTree = "<group>"; };
 		E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrajectoryAnalyzerTests.swift; sourceTree = "<group>"; };
+		A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingPoolTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -114,16 +112,14 @@
 		1513650780834FCF44BE32A0 /* UIComponents */ = {
 			isa = PBXGroup;
 			children = (
-				B5C20D289B5654F603E94ADD /* AnalysisTabView.swift */,
 				A5F112338C862B9F2F8A11AA /* CalibrationView.swift */,
 				D0286648C5B3CA2E34F2ADA7 /* ExportTabView.swift */,
-				A9D69153127295D83175C35C /* ImportTabView.swift */,
-				65109313715AF95F5A2539E9 /* ModelsTabView.swift */,
 				738158B2DFF9E1B1696E9C94 /* PointListView.swift */,
 				2BE7EE26D012CA27654D4FA8 /* RemovalStatsTabView.swift */,
 				E66F052903E72C8891D7555D /* TimelineTabView.swift */,
 				3709A2A02ADB2BAA0165B464 /* TimelineViewPlaceholder.swift */,
 				D1B5A6B029900FB0A518C78A /* VideoPlayerPane.swift */,
+				B5C20D289B5654F603E94ADD /* VideosTabView.swift */,
 			);
 			path = UIComponents;
 			sourceTree = "<group>";
@@ -200,6 +196,7 @@
 				F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */,
 				C7A8B9D0E1F2A3B4C5D6E7F8 /* ShuttlecockDetectorTests.swift */,
 				E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */,
+				A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */,
 			);
 			path = SegmentationTests;
 			sourceTree = "<group>";
@@ -334,6 +331,7 @@
 				94C4A7DEAC0442730297BB4C /* SegmentUtilsTests.swift in Sources */,
 				D8B9C0E1F2A3B4C5D6E7F8A9 /* ShuttlecockDetectorTests.swift in Sources */,
 				A5B6C7D8E9F0A1B2C3D4E5F6 /* TrajectoryAnalyzerTests.swift in Sources */,
+				B1C2D3E4F5A6B7C8D9E0F1A2 /* TrainingPoolTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -342,7 +340,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9A4F95E5F49866CD7329F193 /* AnalysisPipelineImpl.swift in Sources */,
-				5CC65F506957B93EA825D6EC /* AnalysisTabView.swift in Sources */,
+				5CC65F506957B93EA825D6EC /* VideosTabView.swift in Sources */,
 				461B17FEAE06F9417831C5A8 /* AppState.swift in Sources */,
 				05B119B97AA1079F3E163E2E /* AudioAnalyzer.swift in Sources */,
 				7A3925F71EC5B1F79805679B /* BadmintonVideoCutterApp.swift in Sources */,
@@ -356,11 +354,9 @@
 				4DF170D04C5FF1F54531E461 /* HitClassifier.swift in Sources */,
 				5CC3249F1F265E88D6A1744B /* HitModelTrainer.swift in Sources */,
 				ED06773894EB74D348455AF8 /* HybridSegmenter.swift in Sources */,
-				D4973A5937F5C221C7F1D706 /* ImportTabView.swift in Sources */,
 				C5319294A168FCB7B15C7A7B /* ModelManifest.swift in Sources */,
 				5CC8F05945B3C9D77742DFA8 /* ModelPackageService.swift in Sources */,
 				037DACC7DBB40A439212D1F1 /* Models.swift in Sources */,
-				3F734987EE905E28AFC412EC /* ModelsTabView.swift in Sources */,
 				80B054321EC6A50E5240CFDF /* PointListView.swift in Sources */,
 				43E222E482AA3DC63053D866 /* Protocols.swift in Sources */,
 				D6C230CBBDF6C4E87754EA88 /* RemovalStatsTabView.swift in Sources */,

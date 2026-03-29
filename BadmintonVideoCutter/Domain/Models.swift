@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 enum SegmentLabel: String, Codable, CaseIterable {
     case rally
@@ -28,12 +29,41 @@ struct VideoItem: Identifiable, Codable {
     let id: UUID
     var displayName: String
     var url: URL
+    var isSelected: Bool = true
+
+    enum CodingKeys: String, CodingKey {
+        case id, displayName, url
+    }
 
     init(id: UUID = UUID(), displayName: String, url: URL) {
         self.id = id
         self.displayName = displayName
         self.url = url
     }
+}
+
+// MARK: - Per-Video Analysis State
+
+enum VideoAnalysisStatus {
+    case notAnalyzed
+    case analyzing
+    case done
+    case error(String)
+}
+
+struct VideoAnalysisResult {
+    var status: VideoAnalysisStatus = .notAnalyzed
+    var segments: [TimeSegment] = []
+    var trimSegments: [TrimSegment] = []
+    var games: [Game] = []
+    var featureFrames: [FeatureFrame] = []
+    var racketHits: [RacketHitEvent] = []
+    var serveSides: [UUID: ServeDetector.ServeSide] = [:]
+    var pointScores: [UUID: ServeDetector.PointScore] = [:]
+    var analysisProgress: AnalysisProgress = AnalysisProgress()
+    var videoMetadata: VideoMetadata?
+    var calibrationFrames: [CalibrationFrame] = []
+    var calibrationImages: [UUID: CGImage] = [:]
 }
 
 enum SensitivityPreset: String, CaseIterable, Codable, Identifiable {
@@ -198,6 +228,48 @@ enum HitModelStatus {
     case training(progress: String)
     case trained(accuracy: Double, clipCount: Int)
     case failed(error: String)
+}
+
+// MARK: - Training Data Pool
+
+struct TrainingDataManifest: Codable {
+    var formatVersion: Int = 1
+    var lastModified: Date = Date()
+    var videos: [TrainingVideoEntry] = []
+    var totalRallyClips: Int { videos.reduce(0) { $0 + $1.rallyClipCount } }
+    var totalBackgroundClips: Int { videos.reduce(0) { $0 + $1.backgroundClipCount } }
+}
+
+struct TrainingVideoEntry: Codable, Identifiable {
+    var id: String { clipPrefix }
+    var videoFileName: String
+    var addedDate: Date
+    var rallyClipCount: Int
+    var backgroundClipCount: Int
+    var clipPrefix: String
+}
+
+enum TrainingPoolStatus {
+    case empty
+    case hasData(manifest: TrainingDataManifest)
+    case saving(progress: String)
+}
+
+extension JSONDecoder {
+    static var manifestDecoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
+
+extension JSONEncoder {
+    static var manifestEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }
 }
 
 // MARK: - Audio Features

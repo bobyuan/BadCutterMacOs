@@ -2,44 +2,34 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum AppTab: String, CaseIterable, Identifiable {
-    case importTab = "Import"
-    case analyze = "Analyze"
+    case videos = "Videos"
     case timeline = "Timeline"
     case stats = "Rm Stats"
     case export = "Export"
-    case models = "Models"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .importTab: return "square.and.arrow.down"
-        case .analyze: return "waveform.badge.magnifyingglass"
+        case .videos: return "film.stack"
         case .timeline: return "timeline.selection"
         case .stats: return "chart.bar"
         case .export: return "square.and.arrow.up"
-        case .models: return "cpu"
         }
     }
 }
 
 struct ContentView: View {
     @ObservedObject var appState: AppState
-    @State private var selectedTab: AppTab = .importTab
+    @State private var selectedTab: AppTab = .videos
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            ImportTabView(appState: appState)
+            VideosTabView(appState: appState)
                 .tabItem {
-                    Label(AppTab.importTab.rawValue, systemImage: AppTab.importTab.icon)
+                    Label(AppTab.videos.rawValue, systemImage: AppTab.videos.icon)
                 }
-                .tag(AppTab.importTab)
-
-            AnalysisTabView(appState: appState)
-                .tabItem {
-                    Label(AppTab.analyze.rawValue, systemImage: AppTab.analyze.icon)
-                }
-                .tag(AppTab.analyze)
+                .tag(AppTab.videos)
 
             TimelineTabView(appState: appState)
                 .tabItem {
@@ -58,12 +48,6 @@ struct ContentView: View {
                     Label(AppTab.export.rawValue, systemImage: AppTab.export.icon)
                 }
                 .tag(AppTab.export)
-
-            ModelsTabView(appState: appState)
-                .tabItem {
-                    Label(AppTab.models.rawValue, systemImage: AppTab.models.icon)
-                }
-                .tag(AppTab.models)
         }
         .frame(minWidth: 1000, minHeight: 700)
     }

@@ -10,6 +10,11 @@ final class AppState: ObservableObject {
     @Published var player: AVPlayer?
     @Published var videoMetadata: VideoMetadata?
 
+    // MARK: - Multi-Video State
+    @Published var videoResults: [URL: VideoAnalysisResult] = [:]
+    @Published var batchQueue: [URL] = []
+    @Published var batchIndex: Int = 0
+
     // MARK: - Analysis State
     @Published var segments: [TimeSegment] = []
     @Published var trimSegments: [TrimSegment] = []
@@ -31,12 +36,19 @@ final class AppState: ObservableObject {
 
     // MARK: - Hit Model State
     @Published var hitModelStatus: HitModelStatus = .notTrained
+    @Published var useHitModel: Bool = true
+
+    // MARK: - Training Pool State
+    @Published var trainingPoolStatus: TrainingPoolStatus = .empty
+    @Published var trainingPoolManifest: TrainingDataManifest = TrainingDataManifest()
+
+    var hitModelExists: Bool {
+        FileManager.default.fileExists(atPath: hitModelOutputURL.path)
+    }
 
     var hitModelURL: URL? {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let modelDir = appSupport.appendingPathComponent("BadmintonVideoCutter")
-        let modelURL = modelDir.appendingPathComponent("hit_classifier.mlmodelc")
-        return FileManager.default.fileExists(atPath: modelURL.path) ? modelURL : nil
+        guard useHitModel else { return nil }
+        return hitModelExists ? hitModelOutputURL : nil
     }
 
     /// URL for the TrackNetV3 shuttlecock detection CoreML model.
@@ -83,6 +95,7 @@ final class AppState: ObservableObject {
         if FileManager.default.fileExists(atPath: hitModelOutputURL.path) {
             hitModelStatus = .trained(accuracy: 0, clipCount: 0)
         }
+        refreshTrainingPool()
     }
 
     // MARK: - Computed Properties
@@ -131,25 +144,182 @@ final class AppState: ObservableObject {
             if didAccess { url.stopAccessingSecurityScopedResource() }
         }
 
+        // Skip duplicate — just select the existing video
+        if videoItems.contains(where: { $0.url == url }) {
+            selectVideo(url: url)
+            return
+        }
+
         let item = VideoItem(displayName: url.lastPathComponent, url: url)
         videoItems.append(item)
+        selectVideo(url: url)
+        statusMessage = "Loaded \(url.lastPathComponent)"
+    }
+
+    // MARK: - Multi-Video Management
+
+    func selectVideo(url: URL) {
+        // Save current video state before switching
+        saveCurrentVideoState()
+
         currentAssetURL = url
         player = AVPlayer(url: url)
-        segments = []
-        trimSegments = []
-        games = []
-        featureFrames = []
-        racketHits = []
-        calibrationFrames = []
-        selectedCalibrationFrameID = nil
-        calibrationImages = [:]
-        calibrationSessionID = ""
-        analysisProgress = AnalysisProgress()
-        statusMessage = "Loaded \(url.lastPathComponent)"
         lastErrorMessage = nil
 
-        Task { await probeMetadata(url: url) }
+        // Restore target video's state
+        restoreVideoState(for: url)
+
+        // Probe metadata if not yet available
+        if videoMetadata == nil {
+            Task { await probeMetadata(url: url) }
+        }
         loadCalibrationData()
+    }
+
+    func saveCurrentVideoState() {
+        guard let url = currentAssetURL else { return }
+        let status: VideoAnalysisStatus
+        if isAnalyzing {
+            status = .analyzing
+        } else if !segments.isEmpty {
+            status = .done
+        } else if let existing = videoResults[url]?.status, case .error = existing {
+            status = existing
+        } else {
+            status = .notAnalyzed
+        }
+
+        videoResults[url] = VideoAnalysisResult(
+            status: status,
+            segments: segments,
+            trimSegments: trimSegments,
+            games: games,
+            featureFrames: featureFrames,
+            racketHits: racketHits,
+            serveSides: serveSides,
+            pointScores: pointScores,
+            analysisProgress: analysisProgress,
+            videoMetadata: videoMetadata,
+            calibrationFrames: calibrationFrames,
+            calibrationImages: calibrationImages
+        )
+    }
+
+    private func restoreVideoState(for url: URL) {
+        if let result = videoResults[url] {
+            segments = result.segments
+            trimSegments = result.trimSegments
+            games = result.games
+            featureFrames = result.featureFrames
+            racketHits = result.racketHits
+            serveSides = result.serveSides
+            pointScores = result.pointScores
+            analysisProgress = result.analysisProgress
+            videoMetadata = result.videoMetadata
+            calibrationFrames = result.calibrationFrames
+            selectedCalibrationFrameID = result.calibrationFrames.first?.id
+            calibrationImages = result.calibrationImages
+        } else {
+            segments = []
+            trimSegments = []
+            games = []
+            featureFrames = []
+            racketHits = []
+            serveSides = [:]
+            pointScores = [:]
+            analysisProgress = AnalysisProgress()
+            videoMetadata = nil
+            calibrationFrames = []
+            selectedCalibrationFrameID = nil
+            calibrationImages = [:]
+            calibrationSessionID = ""
+        }
+    }
+
+    func removeVideo(id: UUID) {
+        guard let idx = videoItems.firstIndex(where: { $0.id == id }) else { return }
+        let removed = videoItems.remove(at: idx)
+        videoResults.removeValue(forKey: removed.url)
+
+        if removed.url == currentAssetURL {
+            if let next = videoItems.first {
+                selectVideo(url: next.url)
+            } else {
+                currentAssetURL = nil
+                player = nil
+                segments = []
+                trimSegments = []
+                games = []
+                featureFrames = []
+                racketHits = []
+                serveSides = [:]
+                pointScores = [:]
+                analysisProgress = AnalysisProgress()
+                videoMetadata = nil
+                calibrationFrames = []
+                selectedCalibrationFrameID = nil
+                calibrationImages = [:]
+                calibrationSessionID = ""
+            }
+        }
+    }
+
+    func moveVideo(from source: IndexSet, to destination: Int) {
+        videoItems.move(fromOffsets: source, toOffset: destination)
+    }
+
+    func selectAllVideos() {
+        for i in videoItems.indices {
+            videoItems[i].isSelected = true
+        }
+    }
+
+    func selectNoVideos() {
+        for i in videoItems.indices {
+            videoItems[i].isSelected = false
+        }
+    }
+
+    func analysisStatus(for url: URL) -> VideoAnalysisStatus {
+        videoResults[url]?.status ?? .notAnalyzed
+    }
+
+    // MARK: - Batch Analysis
+
+    func analyzeBatch() {
+        let selected = videoItems.filter(\.isSelected).map(\.url)
+        guard !selected.isEmpty else { return }
+        batchQueue = selected
+        batchIndex = 0
+        analyzeNextInBatch()
+    }
+
+    private func analyzeNextInBatch() {
+        guard batchIndex < batchQueue.count else {
+            let total = batchQueue.count
+            batchQueue = []
+            batchIndex = 0
+            statusMessage = "Batch complete: analyzed \(total) video\(total == 1 ? "" : "s")"
+            return
+        }
+
+        let url = batchQueue[batchIndex]
+        // Skip already-analyzed videos
+        if case .done = analysisStatus(for: url) {
+            batchIndex += 1
+            analyzeNextInBatch()
+            return
+        }
+
+        selectVideo(url: url)
+        analyzeCurrentVideo {
+            self.batchIndex += 1
+            self.analyzeNextInBatch()
+        }
+    }
+
+    var isBatchAnalyzing: Bool {
+        !batchQueue.isEmpty
     }
 
     private func probeMetadata(url: URL) async {
@@ -203,13 +373,16 @@ final class AppState: ObservableObject {
     private var analysisStartTime: Date?
     private var elapsedTimer: Timer?
 
-    func analyzeCurrentVideo() {
+    func analyzeCurrentVideo(onComplete: (() -> Void)? = nil) {
         guard let url = currentAssetURL else {
             lastErrorMessage = "Load a video first."
             return
         }
+        let analyzingURL = url
         isAnalyzing = true
-        statusMessage = "Analyzing..."
+        statusMessage = isBatchAnalyzing
+            ? "Analyzing \(batchIndex + 1) of \(batchQueue.count)..."
+            : "Analyzing..."
         lastErrorMessage = nil
         analysisProgress = AnalysisProgress(stage: .extracting)
         analysisStartTime = Date()
@@ -270,12 +443,29 @@ final class AppState: ObservableObject {
                 )
                 let gameCount = games.count
                 statusMessage = "Analysis complete\(mlStatus): \(rallyCount) points in \(gameCount) game\(gameCount == 1 ? "" : "s") (\(formatElapsed(elapsed)))"
+
+                // Save results for this video
+                saveCurrentVideoState()
+                // If user navigated away during analysis, update the result for the analyzed URL
+                if currentAssetURL != analyzingURL {
+                    videoResults[analyzingURL]?.status = .done
+                }
             } catch {
                 lastErrorMessage = error.localizedDescription
+                // Save error status
+                if var result = videoResults[analyzingURL] {
+                    result.status = .error(error.localizedDescription)
+                    videoResults[analyzingURL] = result
+                } else {
+                    videoResults[analyzingURL] = VideoAnalysisResult(
+                        status: .error(error.localizedDescription)
+                    )
+                }
             }
             elapsedTimer?.invalidate()
             elapsedTimer = nil
             isAnalyzing = false
+            onComplete?()
         }
     }
 
@@ -752,26 +942,64 @@ final class AppState: ObservableObject {
         saveCalibrationData()
     }
 
-    // MARK: - Hit Model Training
+    // MARK: - Training Pool
 
-    func trainHitDetector() {
+    func refreshTrainingPool() {
+        let manifest = HitModelTrainer.loadManifest()
+        trainingPoolManifest = manifest
+        if manifest.videos.isEmpty {
+            trainingPoolStatus = .empty
+        } else {
+            trainingPoolStatus = .hasData(manifest: manifest)
+        }
+    }
+
+    /// Whether the currently loaded video is already in the training pool.
+    var currentVideoInPool: Bool {
+        guard let url = currentAssetURL else { return false }
+        let baseName = url.deletingPathExtension().lastPathComponent
+        return trainingPoolManifest.videos.contains { $0.videoFileName == baseName }
+    }
+
+    func saveTrainingClips() {
         guard let url = currentAssetURL else {
             lastErrorMessage = "Load a video first."
             return
         }
         guard !games.isEmpty else {
-            lastErrorMessage = "Analyze a video and review points before training."
+            lastErrorMessage = "Analyze a video and review points before saving."
             return
         }
 
+        trainingPoolStatus = .saving(progress: "Starting...")
+
+        Task {
+            do {
+                let entry = try await HitModelTrainer.saveTrainingClips(
+                    videoURL: url,
+                    games: games,
+                    featureFrames: self.featureFrames,
+                    progress: { [weak self] msg in
+                        Task { @MainActor [weak self] in
+                            self?.trainingPoolStatus = .saving(progress: msg)
+                        }
+                    }
+                )
+                refreshTrainingPool()
+                statusMessage = "Saved \(entry.rallyClipCount) rally + \(entry.backgroundClipCount) background clips from \(entry.videoFileName)"
+            } catch {
+                refreshTrainingPool()
+                lastErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func trainFromPool() {
         hitModelStatus = .training(progress: "Starting...")
 
         Task {
             do {
-                let result = try await HitModelTrainer.train(
-                    videoURL: url,
-                    games: games,
-                    featureFrames: self.featureFrames,
+                let result = try await HitModelTrainer.trainFromPool(
                     outputModelURL: hitModelOutputURL,
                     progress: { [weak self] msg in
                         Task { @MainActor [weak self] in
@@ -792,6 +1020,12 @@ final class AppState: ObservableObject {
         try? FileManager.default.removeItem(at: hitModelOutputURL)
         hitModelStatus = .notTrained
         statusMessage = "Hit detection model deleted."
+    }
+
+    func clearTrainingPool() {
+        HitModelTrainer.clearTrainingPool()
+        refreshTrainingPool()
+        statusMessage = "Training data cleared."
     }
 
     // MARK: - Export
