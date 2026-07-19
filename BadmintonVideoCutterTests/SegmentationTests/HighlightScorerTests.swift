@@ -84,6 +84,46 @@ final class HighlightScorerTests: XCTestCase {
         XCTAssertEqual(scores[points[0].id]!, 0.5, accuracy: 0.001)
     }
 
+    // MARK: - Highlight selection policies
+
+    /// 4 points of 10s each; scores 0.9, 0.3, 0.7, 0.1 in time order.
+    private func selectionFixture() -> (points: [GamePoint], scores: [UUID: Double]) {
+        let points = (0..<4).map { i in
+            GamePoint(pointNumber: i + 1, rallySegment: TimeSegment(
+                start: Double(i) * 20, end: Double(i) * 20 + 10, label: .rally, confidence: 1))
+        }
+        let scores = [points[0].id: 0.9, points[1].id: 0.3, points[2].id: 0.7, points[3].id: 0.1]
+        return (points, scores)
+    }
+
+    func testSelectTopPercentPicksBestChronologically() {
+        let (points, scores) = selectionFixture()
+        let picked = HighlightScorer.select(points: points, scores: scores, selection: .topPercent(50))
+        XCTAssertEqual(picked.map(\.pointNumber), [1, 3])  // best two, back in time order
+    }
+
+    func testSelectTopPercentAlwaysPicksAtLeastOne() {
+        let (points, scores) = selectionFixture()
+        let picked = HighlightScorer.select(points: points, scores: scores, selection: .topPercent(5))
+        XCTAssertEqual(picked.map(\.pointNumber), [1])
+    }
+
+    func testSelectTopMinutesRespectsBudget() {
+        let (points, scores) = selectionFixture()
+        // 25s budget fits two 10s points, not three.
+        let picked = HighlightScorer.select(points: points, scores: scores, selection: .topMinutes(25.0 / 60.0))
+        XCTAssertEqual(picked.map(\.pointNumber), [1, 3])
+    }
+
+    func testSelectThresholdMayBeEmpty() {
+        let (points, scores) = selectionFixture()
+        XCTAssertEqual(
+            HighlightScorer.select(points: points, scores: scores, selection: .threshold(0.6)).map(\.pointNumber),
+            [1, 3]
+        )
+        XCTAssertTrue(HighlightScorer.select(points: points, scores: scores, selection: .threshold(0.95)).isEmpty)
+    }
+
     // MARK: - Golden tests over the 5 cached videos
 
     /// Start times (s) of the top-3 points by highlight score, per video.

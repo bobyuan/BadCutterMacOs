@@ -74,7 +74,11 @@ struct ExportPanel: View {
                 } else {
                     settings
                     exportButton
+                    if !appState.exportOutputs.isEmpty {
+                        results
+                    }
                     Divider()
+                    reelEstimates
                     if let stats = appState.removalStatistics {
                         summary(stats: stats)
                     }
@@ -84,36 +88,34 @@ struct ExportPanel: View {
         }
     }
 
+    private enum HighlightMode: String, CaseIterable, Identifiable {
+        case percent = "Top %"
+        case minutes = "Minutes"
+        case threshold = "Score ≥"
+
+        var id: String { rawValue }
+    }
+
     private var settings: some View {
         VStack(alignment: .leading, spacing: 12) {
-            GroupBox("Mode") {
-                Picker("Mode", selection: $appState.exportConfig.mode) {
-                    ForEach(ExportMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
+            GroupBox("Reels") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Scoring reel — every active point", isOn: reelBinding(.scoring))
+                    Toggle("Highlight reel — best points", isOn: reelBinding(.highlights))
+                    if appState.exportPlan.reels.contains(.highlights) {
+                        highlightSelectionControls
                     }
                 }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
                 .padding(.vertical, 2)
             }
 
-            GroupBox("Transition") {
-                Picker("Style", selection: $appState.exportConfig.transition) {
-                    ForEach(TransitionStyle.allCases) { style in
-                        Text(style.rawValue).tag(style)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-                .padding(.vertical, 2)
-            }
-
-            GroupBox("Format") {
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Match source format", isOn: $appState.exportConfig.matchSourceFormat)
+            GroupBox("Options") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("Individual clip per point", isOn: $appState.exportPlan.individualClips)
+                    Toggle("Match source format", isOn: $appState.exportPlan.matchSourceFormat)
                     if let meta = appState.videoMetadata {
-                        Text("Source: \(meta.codec) \(meta.formattedResolution)")
-                            .font(.caption)
+                        Text("Source: \(meta.codec) \(meta.formattedResolution). Keeps the codec (cuts snap to keyframes); off re-encodes at highest quality.")
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -122,18 +124,206 @@ struct ExportPanel: View {
         }
     }
 
+    private func reelBinding(_ reel: ExportPlan.Reel) -> Binding<Bool> {
+        Binding(
+            get: { appState.exportPlan.reels.contains(reel) },
+            set: { on in
+                if on {
+                    appState.exportPlan.reels.insert(reel)
+                } else {
+                    appState.exportPlan.reels.remove(reel)
+                }
+            }
+        )
+    }
+
+    private var highlightMode: Binding<HighlightMode> {
+        Binding(
+            get: {
+                switch appState.exportPlan.highlightSelection {
+                case .topPercent: return .percent
+                case .topMinutes: return .minutes
+                case .threshold: return .threshold
+                }
+            },
+            set: { mode in
+                switch mode {
+                case .percent: appState.exportPlan.highlightSelection = .topPercent(20)
+                case .minutes: appState.exportPlan.highlightSelection = .topMinutes(3)
+                case .threshold: appState.exportPlan.highlightSelection = .threshold(0.7)
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var highlightSelectionControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("", selection: highlightMode) {
+                ForEach(HighlightMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            switch appState.exportPlan.highlightSelection {
+            case .topPercent(let percent):
+                selectionSlider(value: percent, range: 5...100, step: 5, format: "%.0f%%") {
+                    appState.exportPlan.highlightSelection = .topPercent($0)
+                }
+            case .topMinutes(let minutes):
+                selectionSlider(value: minutes, range: 0.5...10, step: 0.5, format: "%.1f min") {
+                    appState.exportPlan.highlightSelection = .topMinutes($0)
+                }
+            case .threshold(let score):
+                selectionSlider(value: score, range: 0...1, step: 0.05, format: "≥ %.2f") {
+                    appState.exportPlan.highlightSelection = .threshold($0)
+                }
+            }
+
+            let picked = appState.highlightReelPoints
+            let total = picked.reduce(0) { $0 + $1.duration }
+            Text("→ \(picked.count) point\(picked.count == 1 ? "" : "s") · \(formatDuration(total))")
+                .font(.caption)
+                .foregroundStyle(picked.isEmpty ? .orange : .secondary)
+        }
+        .padding(.leading, 18)
+    }
+
+    private func selectionSlider(
+        value: Double,
+        range: ClosedRange<Double>,
+        step: Double,
+        format: String,
+        onChange: @escaping (Double) -> Void
+    ) -> some View {
+        HStack(spacing: 8) {
+            Slider(
+                value: Binding(get: { value }, set: onChange),
+                in: range,
+                step: step
+            )
+            Text(String(format: format, value))
+                .font(.caption).monospacedDigit()
+                .frame(width: 58, alignment: .trailing)
+        }
+    }
+
     private var exportButton: some View {
-        Button(action: { appState.exportRallyOnly() }) {
+        Button(action: { appState.runExport() }) {
             HStack {
                 if appState.isExporting {
                     ProgressView().controlSize(.small)
                 }
-                Text(appState.isExporting ? "Exporting…" : "Export Video")
+                Text(appState.isExporting ? "Exporting…" : "Export")
             }
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
-        .disabled(appState.isExporting || appState.segments.isEmpty)
+        .disabled(
+            appState.isExporting
+                || appState.segments.isEmpty
+                || (appState.exportPlan.reels.isEmpty && !appState.exportPlan.individualClips)
+        )
+    }
+
+    // MARK: Per-reel estimates + results
+
+    /// Bytes per second of the source — used for size estimates.
+    private var sourceBytesPerSecond: Double? {
+        guard let meta = appState.videoMetadata, meta.duration > 0, meta.fileSize > 0 else { return nil }
+        return Double(meta.fileSize) / meta.duration
+    }
+
+    @ViewBuilder
+    private var reelEstimates: some View {
+        let scoringDuration = appState.effectiveKeptSegments.reduce(0) { $0 + $1.duration }
+        let highlightDuration = appState.highlightReelPoints.reduce(0) { $0 + $1.duration }
+
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Will export")
+                .font(.headline)
+            if appState.exportPlan.reels.contains(.scoring) {
+                estimateRow(label: "Scoring reel", duration: scoringDuration)
+            }
+            if appState.exportPlan.reels.contains(.highlights) {
+                estimateRow(label: "Highlight reel", duration: highlightDuration)
+            }
+            if appState.exportPlan.individualClips {
+                let count = appState.exportPlan.reels.contains(.scoring)
+                    ? appState.activePoints.count
+                    : appState.highlightReelPoints.count
+                Text("\(count) individual clips → <video>.clips/")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if appState.exportPlan.reels.isEmpty && !appState.exportPlan.individualClips {
+                Text("Nothing selected.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func estimateRow(label: String, duration: TimeInterval) -> some View {
+        HStack {
+            Text(label).font(.callout)
+            Spacer()
+            Text(formatDuration(duration))
+                .font(.callout).monospacedDigit().bold()
+            if let bps = sourceBytesPerSecond {
+                Text("~" + ByteCountFormatter.string(fromByteCount: Int64(duration * bps), countStyle: .file))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var results: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Exported")
+                .font(.headline)
+            ForEach(appState.exportOutputs.filter { !$0.label.hasPrefix("Clip") }) { output in
+                resultRow(output)
+            }
+            let clips = appState.exportOutputs.filter { $0.label.hasPrefix("Clip") }
+            if !clips.isEmpty {
+                HStack {
+                    Text("\(clips.count) clips").font(.callout)
+                    Spacer()
+                    Button("Show in Finder") {
+                        if let first = clips.first {
+                            NSWorkspace.shared.activateFileViewerSelecting([first.url])
+                        }
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                }
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(.green.opacity(0.08)))
+    }
+
+    private func resultRow(_ output: ExportOutput) -> some View {
+        HStack {
+            Text(output.label).font(.callout)
+            Spacer()
+            Text(formatDuration(output.duration))
+                .font(.caption).monospacedDigit()
+                .foregroundStyle(.secondary)
+            Text(ByteCountFormatter.string(fromByteCount: output.fileSize, countStyle: .file))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([output.url])
+            } label: {
+                Image(systemName: "magnifyingglass.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("Show in Finder")
+        }
     }
 
     // MARK: Summary (absorbs the old Rm Stats tab essentials)

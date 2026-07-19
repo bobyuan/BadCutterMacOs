@@ -163,4 +163,33 @@ enum HighlightScorer {
         }
         return result
     }
+
+    // MARK: - Highlight Selection
+
+    /// Points the highlight reel should contain, in chronological order.
+    /// `threshold` may select nothing; the other policies always pick at
+    /// least the single best point.
+    static func select(points: [GamePoint], scores: [UUID: Double], selection: HighlightSelection) -> [GamePoint] {
+        guard !points.isEmpty else { return [] }
+        let ranked = points.sorted { (scores[$0.id] ?? 0) > (scores[$1.id] ?? 0) }
+
+        var picked: [GamePoint]
+        switch selection {
+        case .topPercent(let percent):
+            let count = max(1, Int((Double(points.count) * percent / 100).rounded()))
+            picked = Array(ranked.prefix(count))
+        case .topMinutes(let minutes):
+            let budget = minutes * 60
+            picked = []
+            var total: TimeInterval = 0
+            for point in ranked {
+                if !picked.isEmpty, total + point.duration > budget { continue }
+                picked.append(point)
+                total += point.duration
+            }
+        case .threshold(let minScore):
+            picked = ranked.filter { (scores[$0.id] ?? 0) >= minScore }
+        }
+        return picked.sorted { $0.start < $1.start }
+    }
 }

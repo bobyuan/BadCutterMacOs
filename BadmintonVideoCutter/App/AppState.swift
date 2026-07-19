@@ -92,7 +92,8 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Export State
-    @Published var exportConfig = ExportConfig()
+    @Published var exportPlan = ExportPlan()
+    @Published var exportOutputs: [ExportOutput] = []
     @Published var isExporting = false
 
     // MARK: - UI State
@@ -1289,26 +1290,103 @@ final class AppState: ObservableObject {
 
     // MARK: - Export
 
-    func exportRallyOnly() {
+    /// Active points in chronological order (the scoring-reel selection).
+    var activePoints: [GamePoint] {
+        games.flatMap(\.points)
+            .filter { $0.reviewStatus != .deleted }
+            .sorted { $0.start < $1.start }
+    }
+
+    /// The highlight reel's points under the current plan.
+    var highlightReelPoints: [GamePoint] {
+        HighlightScorer.select(points: activePoints, scores: highlightScores, selection: exportPlan.highlightSelection)
+    }
+
+    /// Build the file list for the current plan. Individual clips cover every
+    /// point that appears in any selected reel.
+    func exportJobs(for url: URL) -> [ExportJob] {
+        let base = url.deletingPathExtension()
+        var jobs: [ExportJob] = []
+
+        let scoringSegments = effectiveKeptSegments
+        let highlights = highlightReelPoints
+
+        if exportPlan.reels.contains(.scoring), !scoringSegments.isEmpty {
+            jobs.append(ExportJob(
+                label: "Scoring reel",
+                outputURL: base.appendingPathExtension("scoring.mov"),
+                segments: scoringSegments
+            ))
+        }
+        if exportPlan.reels.contains(.highlights), !highlights.isEmpty {
+            jobs.append(ExportJob(
+                label: "Highlight reel",
+                outputURL: base.appendingPathExtension("highlights.mov"),
+                segments: highlights.map(\.rallySegment)
+            ))
+        }
+        if exportPlan.individualClips {
+            var clipPoints = exportPlan.reels.contains(.scoring) ? activePoints : []
+            if exportPlan.reels.contains(.highlights) {
+                for point in highlights where !clipPoints.contains(where: { $0.id == point.id }) {
+                    clipPoints.append(point)
+                }
+            }
+            let clipsDir = base.appendingPathExtension("clips")
+            let gameByPoint: [UUID: Int] = Dictionary(uniqueKeysWithValues: games.flatMap { game in
+                game.points.map { ($0.id, game.gameNumber) }
+            })
+            for point in clipPoints.sorted(by: { $0.start < $1.start }) {
+                let game = gameByPoint[point.id] ?? 1
+                jobs.append(ExportJob(
+                    label: String(format: "Clip G%d #%02d", game, point.pointNumber),
+                    outputURL: clipsDir.appendingPathComponent(String(format: "G%d_point%02d.mov", game, point.pointNumber)),
+                    segments: [point.rallySegment]
+                ))
+            }
+        }
+        return jobs
+    }
+
+    func runExport() {
         guard let url = currentAssetURL else {
             lastErrorMessage = "Load a video first."
             return
         }
-        let keptSegments = effectiveKeptSegments
-        guard !keptSegments.isEmpty else {
-            lastErrorMessage = "No rally segments found. Run analysis first."
+        let jobs = exportJobs(for: url)
+        guard !jobs.isEmpty else {
+            lastErrorMessage = "Nothing to export — enable a reel and run analysis first."
             return
+        }
+        if exportPlan.individualClips {
+            try? FileManager.default.createDirectory(
+                at: url.deletingPathExtension().appendingPathExtension("clips"),
+                withIntermediateDirectories: true
+            )
         }
 
         isExporting = true
-        statusMessage = "Exporting rally-only video..."
+        exportOutputs = []
+        statusMessage = "Exporting…"
         lastErrorMessage = nil
 
         Task {
             do {
-                let output = try await exporter.exportRallyOnly(assetURL: url, segments: keptSegments)
-                statusMessage = "Exported: \(output.lastPathComponent)"
-                recordEvent(.exported(output: output.lastPathComponent))
+                let outputs = try await exporter.run(
+                    jobs: jobs,
+                    assetURL: url,
+                    matchSourceFormat: exportPlan.matchSourceFormat,
+                    onProgress: { [weak self] message in self?.statusMessage = message }
+                )
+                exportOutputs = outputs
+                let reels = outputs.filter { !$0.label.hasPrefix("Clip") }
+                let clipCount = outputs.count - reels.count
+                var parts = reels.map(\.label)
+                if clipCount > 0 { parts.append("\(clipCount) clips") }
+                statusMessage = "Exported \(parts.joined(separator: " + "))"
+                for output in reels {
+                    recordEvent(.exported(output: output.url.lastPathComponent))
+                }
             } catch {
                 lastErrorMessage = error.localizedDescription
             }

@@ -411,14 +411,6 @@ struct RemovalStatistics {
 
 // MARK: - Export Configuration
 
-enum ExportMode: String, CaseIterable, Identifiable {
-    case singleTrimmed = "Single Trimmed Video"
-    case individualRallies = "Individual Rally Clips"
-    case both = "Both"
-
-    var id: String { rawValue }
-}
-
 enum TransitionStyle: String, CaseIterable, Identifiable {
     case cut = "Hard Cut"
     case crossfade = "Crossfade"
@@ -426,10 +418,37 @@ enum TransitionStyle: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-struct ExportConfig {
-    var mode: ExportMode = .singleTrimmed
-    var transition: TransitionStyle = .cut
+/// How the highlight reel picks its points (DESIGN §3.3).
+enum HighlightSelection: Equatable {
+    case topPercent(Double)
+    case topMinutes(Double)
+    case threshold(Double)
+}
+
+/// Export is a set of selection policies, not a mode (DESIGN §3.3).
+struct ExportPlan {
+    enum Reel: String, CaseIterable, Identifiable {
+        case scoring        // all active points
+        case highlights     // best points by highlight score
+
+        var id: String { rawValue }
+    }
+
+    var reels: Set<Reel> = [.scoring]
+    var highlightSelection: HighlightSelection = .topPercent(20)
+    var individualClips: Bool = false
+    var scoreOverlay: Bool = false          // v2.1
+    var transition: TransitionStyle = .cut  // .crossfade v2.1
     var matchSourceFormat: Bool = true
+}
+
+/// One rendered export: a reel or an individual clip.
+struct ExportOutput: Identifiable {
+    let id = UUID()
+    var label: String
+    var url: URL
+    var duration: TimeInterval
+    var fileSize: Int64
 }
 
 // MARK: - Shuttlecock Calibration
