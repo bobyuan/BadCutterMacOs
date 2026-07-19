@@ -50,12 +50,19 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 - [x] Delete dead tab scaffolding (VideosTabView, ExportTabView,
       RemovalStatsTabView, TimelineViewPlaceholder, ContentViewModel)
 
-## Phase 3 — Review Affordances
+## Phase 3 — Review Affordances ✅
 
-- [ ] Add-missed-point (timeline button + shortcut; default span heuristic)
-- [ ] Added points flow into scoring/export/training-clip extraction
-- [ ] Review-state chips (auto/confirmed/edited/added/deleted)
-- [ ] 👍/👎 rating capture → ledger
+- [x] Add-missed-point (timeline button + bare "A" shortcut; span heuristic:
+      break's high-audio window ±1s padding within 3s of playhead, else ±4s,
+      clamped to the break — `SegmentUtils.defaultAddedPointSpan`, 7 tests)
+- [x] Added points flow into scoring/export/training-clip extraction (they are
+      ordinary GamePoints materialized from `pointAdded`; timeline rally blocks
+      now draw from active points so added ones render)
+- [x] Review-state chips (auto/confirmed/edited/added/deleted) — derived from
+      ledger effective corrections (`addedPointIDs`/`editedPointIDs`), not
+      stored; rated points count as confirmed
+- [x] 👍/👎 rating capture → ledger (`highlightRated`, audit-only/not undoable;
+      re-tap clears via rating "none"; derived map restored with the session)
 
 ## Phase 4 — Highlight Scoring (heuristic)
 
@@ -98,3 +105,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | 2026-07-18 | ML research completed → DESIGN.md §5: TrackNetV3 stays (open SOTA); adopt trajectory-based hit detection (Sensors 2024, F1 90.5 fused) + vDSP audio onsets + SNClassifySoundRequest cheer signal; noted competitor RallyCut. User picked UI Option A "Studio". Started Phase 1 (corrections ledger). |
 | 2026-07-18 | **Phase 1 complete.** SessionStore + SessionModels (append-only ledger.jsonl, baseline.json, frames.json, meta.json per content-hashed videoID). AppState wired: events on delete/restore/boundary-commit/pool-save/export; session auto-restores on video open; ⌘Z/⇧⌘Z undo-redo via event replay. Drag handles in TimelineTabView now commit net boundary change on release. 8 new tests + existing suites green. |
 | 2026-07-18 | **Phase 2 complete.** Studio layout replaces 4 tabs: single window with LibraryPane / PlayerTimelinePane / InspectorPane (Points, Export, Models) in an HSplitView, status bar, calibration sheet. New `TimelineController` shares playhead/viewport/selection across panes. Deleted dead tab views + ContentViewModel. Rm Stats histograms dropped (summary only). Build clean, SessionStore + SegmentUtils tests pass, app launches. Commit delayed to next session by terminal TCC permission loss (`30a9dc3`). |
+| 2026-07-18 | **Phase 3 complete** (`0ff1912`). Add Point button in timeline footer (bare "A" shortcut) inserts an undoable `pointAdded` correction with high-audio-window default span. Review chips per point row derived from the ledger; 👍/👎 buttons record `highlightRated` events and survive session restore. 7 new span-heuristic tests; SegmentUtils + SessionStore suites green; build clean; UI render verified by screenshot (interactive flow needs a video analysis — not yet exercised). |
