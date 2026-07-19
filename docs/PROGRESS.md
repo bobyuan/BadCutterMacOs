@@ -74,11 +74,15 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 - [x] Golden tests over 5 cached videos (top-3 start times pinned) + 6 unit
       tests over synthetic trajectories/audio
 
-## Phase 5 — Export Policies
+## Phase 5 — Export Policies ✅
 
-- [ ] `ExportPlan` model; `VideoExporter.export(plan:points:)`
-- [ ] Scoring reel + highlight reel + individual clips
-- [ ] Per-reel summary (duration/size); remove dead `ExportConfig` paths
+- [x] `ExportPlan` model; `VideoExporter.run(jobs:)` (AppState builds the job
+      list; passthrough when matching source format, re-encode fallback)
+- [x] Scoring reel + highlight reel (`HighlightScorer.select`:
+      topPercent/topMinutes/threshold, 4 tests) + individual clips
+      (`<base>.clips/G<g>_point<nn>.mov`)
+- [x] Per-reel summary (pre-export estimates from source bitrate + post-export
+      actuals with show-in-Finder); removed dead `ExportConfig`/`ExportMode`
 
 ## Phase 6 — Model Lifecycle + Config Unification
 
@@ -111,3 +115,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | 2026-07-18 | **Phase 2 complete.** Studio layout replaces 4 tabs: single window with LibraryPane / PlayerTimelinePane / InspectorPane (Points, Export, Models) in an HSplitView, status bar, calibration sheet. New `TimelineController` shares playhead/viewport/selection across panes. Deleted dead tab views + ContentViewModel. Rm Stats histograms dropped (summary only). Build clean, SessionStore + SegmentUtils tests pass, app launches. Commit delayed to next session by terminal TCC permission loss (`30a9dc3`). |
 | 2026-07-18 | **Phase 3 complete** (`0ff1912`). Add Point button in timeline footer (bare "A" shortcut) inserts an undoable `pointAdded` correction with high-audio-window default span. Review chips per point row derived from the ledger; 👍/👎 buttons record `highlightRated` events and survive session restore. 7 new span-heuristic tests; SegmentUtils + SessionStore suites green; build clean; UI render verified by screenshot (interactive flow needs a video analysis — not yet exercised). |
 | 2026-07-19 | **Phase 4 complete** (`19b7b76`). New `HighlightScorer.swift`: `HitDetector` (trajectory vy direction-changes + audio-onset fusion) and 6-feature percentile-weighted scoring per DESIGN §3.4. AppState recomputes on every point mutation; Points panel gains star badges, Time/Score sort, top-K slider. Golden top-3 pinned for all 5 cached videos (e.g. IMG_8510: 6.6/686.8/501.2s). All suites green. New-file pbxproj registration done (explicit refs). |
+| 2026-07-19 | **Phase 5 complete** (`3edc392`). ExportPlan/ExportOutput models, HighlightScorer.select policies, job-based VideoExporter with passthrough+fallback, rebuilt Export panel (reel toggles, selection slider, estimates, results). **Full E2E verified via UI automation on IMG_6155.rallies.mov**: import → analyze (11 pts) → chips/👍(confirmed chip)/score-sort/top-K → Add Point (added chip, renumber, rescore) → ⌘Z undo (rating survives) → dual-reel export (h264 passthrough, 65.1s + 22.0s, sizes shown). Known polish: point rows too cramped at min inspector width (chips/badges wrap). |
