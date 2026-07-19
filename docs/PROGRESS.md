@@ -37,13 +37,18 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 - [x] All existing tests green after `xcodebuild clean` (HybridSegmenter,
       SegmentUtils, TrajectoryAnalyzer)
 
-## Phase 2 — UI Shell Redesign
+## Phase 2 — UI Shell Redesign ✅
 
-- [ ] Implement chosen option (pending D-003) as empty shell hosting existing views
-- [ ] Migrate player + timeline into center pane
-- [ ] Migrate point list into inspector
-- [ ] Absorb Rm Stats into Export panel; training UI into Models panel
-- [ ] Delete dead tab scaffolding
+- [x] Implement chosen option (Option A "Studio" per D-003): `StudioView`
+      three-pane HSplitView + status bar; calibration presented as a sheet
+- [x] Migrate player + timeline into center pane (`PlayerTimelinePane`, renamed
+      from TimelineTabView; shared `TimelineController` for
+      playhead/viewport/selection)
+- [x] Migrate point list into inspector (`InspectorPane` Points section)
+- [x] Absorb Rm Stats into Export panel; training UI into Models panel
+      (Rm Stats histograms dropped — summary stats only)
+- [x] Delete dead tab scaffolding (VideosTabView, ExportTabView,
+      RemovalStatsTabView, TimelineViewPlaceholder, ContentViewModel)
 
 ## Phase 3 — Review Affordances
 
@@ -92,3 +97,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | 2026-07-18 | Reviewed codebase (pipeline + UI/feedback-loop audit). Identified gaps G1–G8. Committed training-pool refactor to `main` (`8b82745`). Created `v2-redesign`. Wrote DESIGN/PROGRESS/DECISIONS docs. Launched background research on badminton ML models (TrackNet successors, ShuttleSet/CoachAI, pose, audio, highlights). |
 | 2026-07-18 | ML research completed → DESIGN.md §5: TrackNetV3 stays (open SOTA); adopt trajectory-based hit detection (Sensors 2024, F1 90.5 fused) + vDSP audio onsets + SNClassifySoundRequest cheer signal; noted competitor RallyCut. User picked UI Option A "Studio". Started Phase 1 (corrections ledger). |
 | 2026-07-18 | **Phase 1 complete.** SessionStore + SessionModels (append-only ledger.jsonl, baseline.json, frames.json, meta.json per content-hashed videoID). AppState wired: events on delete/restore/boundary-commit/pool-save/export; session auto-restores on video open; ⌘Z/⇧⌘Z undo-redo via event replay. Drag handles in TimelineTabView now commit net boundary change on release. 8 new tests + existing suites green. |
+| 2026-07-18 | **Phase 2 complete.** Studio layout replaces 4 tabs: single window with LibraryPane / PlayerTimelinePane / InspectorPane (Points, Export, Models) in an HSplitView, status bar, calibration sheet. New `TimelineController` shares playhead/viewport/selection across panes. Deleted dead tab views + ContentViewModel. Rm Stats histograms dropped (summary only). Build clean, SessionStore + SegmentUtils tests pass, app launches. Commit delayed to next session by terminal TCC permission loss (`30a9dc3`). |
