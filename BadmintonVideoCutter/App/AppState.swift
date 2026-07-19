@@ -88,6 +88,13 @@ final class AppState: ObservableObject {
     @Published var lastErrorMessage: String?
     @Published var isShowingFileImporter = false
 
+    // MARK: - Session (Corrections Ledger) State
+    @Published var canUndo = false
+    @Published var canRedo = false
+    private var sessionBaseline: SessionBaseline?
+    private var sessionEvents: [SessionEvent] = []
+    private let sessionStore = SessionStore.shared
+
     private let exporter = VideoExporter()
 
     init() {
@@ -201,7 +208,9 @@ final class AppState: ObservableObject {
             analysisProgress: analysisProgress,
             videoMetadata: videoMetadata,
             calibrationFrames: calibrationFrames,
-            calibrationImages: calibrationImages
+            calibrationImages: calibrationImages,
+            sessionBaseline: sessionBaseline,
+            sessionEvents: sessionEvents
         )
     }
 
@@ -219,6 +228,9 @@ final class AppState: ObservableObject {
             calibrationFrames = result.calibrationFrames
             selectedCalibrationFrameID = result.calibrationFrames.first?.id
             calibrationImages = result.calibrationImages
+            sessionBaseline = result.sessionBaseline
+            sessionEvents = result.sessionEvents
+            refreshUndoState()
         } else {
             segments = []
             trimSegments = []
@@ -233,7 +245,64 @@ final class AppState: ObservableObject {
             selectedCalibrationFrameID = nil
             calibrationImages = [:]
             calibrationSessionID = ""
+            sessionBaseline = nil
+            sessionEvents = []
+            refreshUndoState()
+
+            // No in-memory state — try restoring a persisted session from disk.
+            restoreSessionFromDisk(for: url)
         }
+    }
+
+    /// Restore a previously analyzed video's state from its persisted session
+    /// (baseline + correction-event replay + cached feature frames).
+    private func restoreSessionFromDisk(for url: URL) {
+        guard let loaded = sessionStore.loadSession(for: url),
+              !loaded.baseline.games.isEmpty else { return }
+
+        sessionBaseline = loaded.baseline
+        sessionEvents = loaded.events
+        segments = loaded.baseline.segments
+        featureFrames = loaded.frames
+        serveSides = loaded.baseline.serveSides
+
+        let effective = SessionMaterializer.effectiveCorrections(from: loaded.events)
+        games = SessionMaterializer.apply(events: effective, to: loaded.baseline.games)
+
+        deriveTrimSegments()
+        computeAllScores()
+        refreshUndoState()
+
+        let pointCount = games.reduce(0) { $0 + $1.activePointCount }
+        analysisProgress = AnalysisProgress(
+            stage: .complete,
+            audioProgress: 1.0,
+            videoProgress: 1.0,
+            ralliesFound: pointCount
+        )
+        statusMessage = "Restored previous session: \(pointCount) points"
+
+        // Mirror into the in-memory cache so status dots show "done"
+        saveCurrentVideoStateSnapshot(for: url)
+    }
+
+    private func saveCurrentVideoStateSnapshot(for url: URL) {
+        videoResults[url] = VideoAnalysisResult(
+            status: .done,
+            segments: segments,
+            trimSegments: trimSegments,
+            games: games,
+            featureFrames: featureFrames,
+            racketHits: racketHits,
+            serveSides: serveSides,
+            pointScores: pointScores,
+            analysisProgress: analysisProgress,
+            videoMetadata: videoMetadata,
+            calibrationFrames: calibrationFrames,
+            calibrationImages: calibrationImages,
+            sessionBaseline: sessionBaseline,
+            sessionEvents: sessionEvents
+        )
     }
 
     func removeVideo(id: UUID) {
@@ -444,6 +513,8 @@ final class AppState: ObservableObject {
                 let gameCount = games.count
                 statusMessage = "Analysis complete\(mlStatus): \(rallyCount) points in \(gameCount) game\(gameCount == 1 ? "" : "s") (\(formatElapsed(elapsed)))"
 
+                // Persist the analysis as the session baseline (corrections ledger)
+                persistBaseline(for: analyzingURL)
                 // Save results for this video
                 saveCurrentVideoState()
                 // If user navigated away during analysis, update the result for the analyzed URL
@@ -490,9 +561,75 @@ final class AppState: ObservableObject {
                 games[gameIdx].points[pointIdx].reviewStatus = status
                 deriveTrimSegments()
                 computeAllScores()
+                recordEvent(status == .deleted ? .pointDeleted(pointID: pointID) : .pointRestored(pointID: pointID))
                 return
             }
         }
+    }
+
+    // MARK: - Session Ledger
+
+    /// Append an event to the current video's ledger (in memory + on disk).
+    private func recordEvent(_ event: SessionEvent) {
+        guard let url = currentAssetURL else { return }
+        sessionEvents.append(event)
+        sessionStore.append(event, for: url)
+        refreshUndoState()
+    }
+
+    private func refreshUndoState() {
+        let counts = SessionMaterializer.undoRedoCounts(from: sessionEvents)
+        canUndo = counts.undoable > 0
+        canRedo = counts.redoable > 0
+    }
+
+    /// Look up a point across all games.
+    func point(withID id: UUID) -> GamePoint? {
+        games.flatMap(\.points).first { $0.id == id }
+    }
+
+    /// Record a completed boundary drag as a ledger event. The live mutation
+    /// already happened via updatePointBoundary during the drag; this logs the
+    /// net change (drag start → drag end) for undo and training.
+    func commitPointBoundary(pointID: UUID, edge: BoundaryEdge, from: TimeInterval, to: TimeInterval) {
+        guard abs(from - to) > 0.01 else { return }
+        recordEvent(.boundaryChanged(pointID: pointID, edge: edge, from: from, to: to))
+    }
+
+    func undo() {
+        guard canUndo else { return }
+        recordEvent(.undo)
+        rematerializeFromSession()
+    }
+
+    func redo() {
+        guard canRedo else { return }
+        recordEvent(.redo)
+        rematerializeFromSession()
+    }
+
+    /// Rebuild games from baseline + effective corrections (after undo/redo).
+    private func rematerializeFromSession() {
+        guard let baseline = sessionBaseline else { return }
+        let effective = SessionMaterializer.effectiveCorrections(from: sessionEvents)
+        games = SessionMaterializer.apply(events: effective, to: baseline.games)
+        deriveTrimSegments()
+        computeAllScores()
+    }
+
+    /// Persist a fresh analysis result as the session baseline.
+    private func persistBaseline(for url: URL) {
+        sessionBaseline = sessionStore.saveBaseline(
+            segments: segments,
+            games: games,
+            serveSides: serveSides,
+            videoDuration: videoMetadata?.duration,
+            frames: featureFrames,
+            usedHitModel: hitModelURL != nil,
+            for: url
+        )
+        sessionEvents = []
+        refreshUndoState()
     }
 
     // MARK: - Serve Detection & Scoring
@@ -505,6 +642,14 @@ final class AppState: ObservableObject {
             let sides = await ServeDetector.detectServes(videoURL: url, points: allPoints)
             self.serveSides = sides
             computeAllScores()
+
+            // Serve detection finishes after the baseline is saved — fold the
+            // sides into the persisted baseline so restored sessions have them.
+            if var baseline = sessionBaseline {
+                baseline.serveSides = sides
+                sessionBaseline = baseline
+                sessionStore.rewriteBaseline(baseline, for: url)
+            }
         }
     }
 
@@ -542,7 +687,7 @@ final class AppState: ObservableObject {
                 .map(\.rallySegment)
                 .sorted { $0.start < $1.start }
 
-            let totalDuration = videoMetadata?.duration ?? activeSegments.last?.end ?? 0
+            let totalDuration = videoMetadata?.duration ?? sessionBaseline?.videoDuration ?? activeSegments.last?.end ?? 0
             var trims: [TrimSegment] = []
 
             for i in 0..<activeSegments.count {
@@ -925,6 +1070,10 @@ final class AppState: ObservableObject {
                 )
                 let gameCount = games.count
                 statusMessage = "Calibrated re-analysis complete\(mlStatus): \(rallyCount) points in \(gameCount) game\(gameCount == 1 ? "" : "s") (\(formatElapsed(elapsed)))"
+
+                // Persist the re-analysis as the new session baseline
+                persistBaseline(for: url)
+                saveCurrentVideoState()
             } catch {
                 lastErrorMessage = error.localizedDescription
             }
@@ -987,6 +1136,7 @@ final class AppState: ObservableObject {
                 )
                 refreshTrainingPool()
                 statusMessage = "Saved \(entry.rallyClipCount) rally + \(entry.backgroundClipCount) background clips from \(entry.videoFileName)"
+                recordEvent(.savedToPool(rallyClips: entry.rallyClipCount, backgroundClips: entry.backgroundClipCount))
             } catch {
                 refreshTrainingPool()
                 lastErrorMessage = error.localizedDescription
@@ -1049,6 +1199,7 @@ final class AppState: ObservableObject {
             do {
                 let output = try await exporter.exportRallyOnly(assetURL: url, segments: keptSegments)
                 statusMessage = "Exported: \(output.lastPathComponent)"
+                recordEvent(.exported(output: output.lastPathComponent))
             } catch {
                 lastErrorMessage = error.localizedDescription
             }

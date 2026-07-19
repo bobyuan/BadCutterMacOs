@@ -44,6 +44,9 @@
 		F4A5B6C7D8E9F0A1B2C3D4E5 /* TrajectoryAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */; };
 		A5B6C7D8E9F0A1B2C3D4E5F6 /* TrajectoryAnalyzerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */; };
 		B1C2D3E4F5A6B7C8D9E0F1A2 /* TrainingPoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */; };
+		BB01AA02CC03DD04EE05FF06 /* SessionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */; };
+		BB01AA02CC03DD04EE05FF07 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF07 /* SessionStore.swift */; };
+		BB01AA02CC03DD04EE05FF08 /* SessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -97,6 +100,9 @@
 		D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrajectoryAnalyzer.swift; sourceTree = "<group>"; };
 		E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrajectoryAnalyzerTests.swift; sourceTree = "<group>"; };
 		A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingPoolTests.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModels.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF07 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStoreTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -139,8 +145,18 @@
 			isa = PBXGroup;
 			children = (
 				CB2C787EE892C2DD3A4BB3AB /* SegmentUtilsTests.swift */,
+				AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */,
 			);
 			path = DomainTests;
+			sourceTree = "<group>";
+		};
+		CC01AA02BB03DD04EE05FF09 /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */,
+				AA01BB02CC03DD04EE05FF07 /* SessionStore.swift */,
+			);
+			path = Persistence;
 			sourceTree = "<group>";
 		};
 		28D4C9C9CE0343A30980480A /* Resources */ = {
@@ -207,6 +223,7 @@
 				16866753C1B2865DB68B22E7 /* App */,
 				88BEF754AB2D5D7C61006D1D /* Domain */,
 				F1B41CEF3586B9CADDC3D4E9 /* ModelMgmt */,
+				CC01AA02BB03DD04EE05FF09 /* Persistence */,
 				28D4C9C9CE0343A30980480A /* Resources */,
 				CABD3589EE9B69BAAA3CA0E1 /* Segmentation */,
 				1513650780834FCF44BE32A0 /* UIComponents */,
@@ -329,6 +346,7 @@
 				DA23C2E564F4042D81AF775B /* BasicFeatureExtractorTests.swift in Sources */,
 				21BB9C29BC55D238F9AFDE6D /* HybridSegmenterTests.swift in Sources */,
 				94C4A7DEAC0442730297BB4C /* SegmentUtilsTests.swift in Sources */,
+				BB01AA02CC03DD04EE05FF08 /* SessionStoreTests.swift in Sources */,
 				D8B9C0E1F2A3B4C5D6E7F8A9 /* ShuttlecockDetectorTests.swift in Sources */,
 				A5B6C7D8E9F0A1B2C3D4E5F6 /* TrajectoryAnalyzerTests.swift in Sources */,
 				B1C2D3E4F5A6B7C8D9E0F1A2 /* TrainingPoolTests.swift in Sources */,
@@ -362,6 +380,8 @@
 				D6C230CBBDF6C4E87754EA88 /* RemovalStatsTabView.swift in Sources */,
 				A28A73F726CF374EE5A9F60F /* SegmentUtils.swift in Sources */,
 				9E68F64006AB97CB759D005D /* ServeDetector.swift in Sources */,
+				BB01AA02CC03DD04EE05FF06 /* SessionModels.swift in Sources */,
+				BB01AA02CC03DD04EE05FF07 /* SessionStore.swift in Sources */,
 				7F3A61D8E4B925C0A8D2F146 /* ShuttlecockDetector.swift in Sources */,
 				F4A5B6C7D8E9F0A1B2C3D4E5 /* TrajectoryAnalyzer.swift in Sources */,
 				8E8595DD1480ECECF403ADF9 /* TimelineTabView.swift in Sources */,

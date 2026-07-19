@@ -17,18 +17,25 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
       detection + audio onset upgrade + cheer signal; watch BST/RTMPose)
 - [x] User picked UI direction: **A "Studio"** → DECISIONS.md D-003
 
-## Phase 1 — Corrections Ledger (keystone)
+## Phase 1 — Corrections Ledger (keystone) ✅
 
-- [ ] `Persistence/SessionStore.swift`: videoID hashing, ledger append, snapshot,
-      materialize
-- [ ] `CodableFrame` promoted from tests into app target; `frames.bin` cache write/read
-- [ ] Wire `AppState` mutation points to emit events (`setPointReviewStatus`,
-      `updatePointBoundary`, `updateTrimBoundary`, analysis completion, save-to-pool,
-      export)
-- [ ] Restore session on video open (snapshot → `VideoAnalysisResult`)
-- [ ] Undo/redo (⌘Z/⇧⌘Z) via ledger replay
-- [ ] `SessionStoreTests`: round-trip, replay, identity stability
-- [ ] All existing tests green after `xcodebuild clean`
+- [x] `Persistence/SessionModels.swift` (events, baseline, materializer) +
+      `Persistence/SessionStore.swift` (videoID hashing, ledger append, load)
+- [x] `CodableFrame` promoted from tests into app target; `frames.json` cache
+      (JSON instead of .bin — matches TestData pattern, fast enough)
+- [x] Wire `AppState` mutation points to emit events (`setPointReviewStatus`,
+      boundary-drag commit via new `commitPointBoundary`, analysis completion,
+      save-to-pool, export). Trim drags recorded via the adjacent *point*
+      boundary only (trim IDs are regenerated on every derive → unstable; see
+      D-006)
+- [x] Restore session on video open (baseline + event replay + cached frames)
+- [x] Undo/redo (⌘Z/⇧⌘Z) as ledger events (`undo`/`redo` are themselves
+      appended — the ledger stays append-only)
+- [x] `SessionStoreTests` (8 tests): identity stability, materialize,
+      undo/redo semantics, pointAdded insert/renumber, ledger + baseline
+      round-trips
+- [x] All existing tests green after `xcodebuild clean` (HybridSegmenter,
+      SegmentUtils, TrajectoryAnalyzer)
 
 ## Phase 2 — UI Shell Redesign
 
@@ -84,3 +91,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 |---|---|
 | 2026-07-18 | Reviewed codebase (pipeline + UI/feedback-loop audit). Identified gaps G1–G8. Committed training-pool refactor to `main` (`8b82745`). Created `v2-redesign`. Wrote DESIGN/PROGRESS/DECISIONS docs. Launched background research on badminton ML models (TrackNet successors, ShuttleSet/CoachAI, pose, audio, highlights). |
 | 2026-07-18 | ML research completed → DESIGN.md §5: TrackNetV3 stays (open SOTA); adopt trajectory-based hit detection (Sensors 2024, F1 90.5 fused) + vDSP audio onsets + SNClassifySoundRequest cheer signal; noted competitor RallyCut. User picked UI Option A "Studio". Started Phase 1 (corrections ledger). |
+| 2026-07-18 | **Phase 1 complete.** SessionStore + SessionModels (append-only ledger.jsonl, baseline.json, frames.json, meta.json per content-hashed videoID). AppState wired: events on delete/restore/boundary-commit/pool-save/export; session auto-restores on video open; ⌘Z/⇧⌘Z undo-redo via event replay. Drag handles in TimelineTabView now commit net boundary change on release. 8 new tests + existing suites green. |

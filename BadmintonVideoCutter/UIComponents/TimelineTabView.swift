@@ -372,6 +372,10 @@ struct TrimOverlayTimelineView: View {
     @Binding var playheadTime: TimeInterval
     @Binding var selectedPointID: UUID?
 
+    // Boundary-drag tracking for ledger commits (one drag at a time)
+    @State private var dragPointID: UUID?
+    @State private var dragOriginValue: TimeInterval?
+
     var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
@@ -411,10 +415,23 @@ struct TrimOverlayTimelineView: View {
                                 .onChanged { value in
                                     let newTime = xToTime(value.location.x, width: width)
                                     appState.updateTrimBoundary(trimID: trim.id, newStart: newTime)
-                                    if let pointID = appState.adjacentPointForTrim(trimID: trim.id, edge: .leading) {
+                                    if dragPointID == nil,
+                                       let pointID = appState.adjacentPointForTrim(trimID: trim.id, edge: .leading) {
+                                        dragPointID = pointID
+                                        dragOriginValue = appState.point(withID: pointID)?.end
+                                    }
+                                    if let pointID = dragPointID {
                                         appState.updatePointBoundary(pointID: pointID, newEnd: newTime)
                                         selectedPointID = pointID
                                     }
+                                }
+                                .onEnded { _ in
+                                    if let pointID = dragPointID, let from = dragOriginValue,
+                                       let point = appState.point(withID: pointID) {
+                                        appState.commitPointBoundary(pointID: pointID, edge: .end, from: from, to: point.end)
+                                    }
+                                    dragPointID = nil
+                                    dragOriginValue = nil
                                 }
                         )
 
@@ -426,10 +443,23 @@ struct TrimOverlayTimelineView: View {
                                 .onChanged { value in
                                     let newTime = xToTime(value.location.x, width: width)
                                     appState.updateTrimBoundary(trimID: trim.id, newEnd: newTime)
-                                    if let pointID = appState.adjacentPointForTrim(trimID: trim.id, edge: .trailing) {
+                                    if dragPointID == nil,
+                                       let pointID = appState.adjacentPointForTrim(trimID: trim.id, edge: .trailing) {
+                                        dragPointID = pointID
+                                        dragOriginValue = appState.point(withID: pointID)?.start
+                                    }
+                                    if let pointID = dragPointID {
                                         appState.updatePointBoundary(pointID: pointID, newStart: newTime)
                                         selectedPointID = pointID
                                     }
+                                }
+                                .onEnded { _ in
+                                    if let pointID = dragPointID, let from = dragOriginValue,
+                                       let point = appState.point(withID: pointID) {
+                                        appState.commitPointBoundary(pointID: pointID, edge: .start, from: from, to: point.start)
+                                    }
+                                    dragPointID = nil
+                                    dragOriginValue = nil
                                 }
                         )
                 }

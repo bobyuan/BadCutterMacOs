@@ -64,6 +64,9 @@ struct VideoAnalysisResult {
     var videoMetadata: VideoMetadata?
     var calibrationFrames: [CalibrationFrame] = []
     var calibrationImages: [UUID: CGImage] = [:]
+    // Session persistence (corrections ledger)
+    var sessionBaseline: SessionBaseline?
+    var sessionEvents: [SessionEvent] = []
 }
 
 enum SensitivityPreset: String, CaseIterable, Codable, Identifiable {

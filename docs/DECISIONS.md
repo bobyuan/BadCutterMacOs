@@ -52,3 +52,16 @@ versions kept for one-click revert (DESIGN.md §3.5).
 **Why:** Continual retraining without an eval gate rots silently — already observed the
 failure class in v1 tuning ("adaptive thresholds → tiny splits → mega-segments").
 **Rejected:** Trust-the-latest-training-run (current behavior: overwrite in place).
+
+## D-006 · 2026-07-18 · Ledger records point boundaries, not trim boundaries
+
+**Decision:** Boundary drags are logged as `boundaryChanged` on the adjacent *point*;
+no `trimBoundaryChanged` event exists. Undo/redo are appended as events (`undo`/`redo`)
+and resolved at materialize time, keeping the ledger strictly append-only.
+**Why:** Trim segments are re-derived from points on every change, so their IDs are
+unstable — events referencing them would dangle. The timeline UI already mirrors every
+trim-handle drag onto the adjacent point boundary, which carries the same information
+with a stable ID. Append-only undo preserves the full audit trail (an undone action is
+still visible in history).
+**Rejected:** Logging trim IDs (dangling refs); truncating the ledger on undo (loses
+audit; complicates concurrent readers).
