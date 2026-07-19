@@ -64,11 +64,15 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 - [x] 👍/👎 rating capture → ledger (`highlightRated`, audit-only/not undoable;
       re-tap clears via rating "none"; derived map restored with the session)
 
-## Phase 4 — Highlight Scoring (heuristic)
+## Phase 4 — Highlight Scoring (heuristic) ✅
 
-- [ ] `HighlightScorer`: 6 features + percentile normalization + weighted sum
-- [ ] Score badges + sort in point list; top-K slider
-- [ ] Golden tests over 5 cached videos
+- [x] `HighlightScorer`: 6 features + percentile normalization + weighted sum
+      (plus `HitDetector` per §5.1: trajectory descending→ascending direction
+      changes fused with audio onsets — feeds hitCount/tempo)
+- [x] Score badges + sort in point list (Time/Score toggle; score mode ranks
+      flat across games); top-K slider (top-K rows get filled star)
+- [x] Golden tests over 5 cached videos (top-3 start times pinned) + 6 unit
+      tests over synthetic trajectories/audio
 
 ## Phase 5 — Export Policies
 
@@ -106,3 +110,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | 2026-07-18 | **Phase 1 complete.** SessionStore + SessionModels (append-only ledger.jsonl, baseline.json, frames.json, meta.json per content-hashed videoID). AppState wired: events on delete/restore/boundary-commit/pool-save/export; session auto-restores on video open; ⌘Z/⇧⌘Z undo-redo via event replay. Drag handles in TimelineTabView now commit net boundary change on release. 8 new tests + existing suites green. |
 | 2026-07-18 | **Phase 2 complete.** Studio layout replaces 4 tabs: single window with LibraryPane / PlayerTimelinePane / InspectorPane (Points, Export, Models) in an HSplitView, status bar, calibration sheet. New `TimelineController` shares playhead/viewport/selection across panes. Deleted dead tab views + ContentViewModel. Rm Stats histograms dropped (summary only). Build clean, SessionStore + SegmentUtils tests pass, app launches. Commit delayed to next session by terminal TCC permission loss (`30a9dc3`). |
 | 2026-07-18 | **Phase 3 complete** (`0ff1912`). Add Point button in timeline footer (bare "A" shortcut) inserts an undoable `pointAdded` correction with high-audio-window default span. Review chips per point row derived from the ledger; 👍/👎 buttons record `highlightRated` events and survive session restore. 7 new span-heuristic tests; SegmentUtils + SessionStore suites green; build clean; UI render verified by screenshot (interactive flow needs a video analysis — not yet exercised). |
+| 2026-07-19 | **Phase 4 complete** (`19b7b76`). New `HighlightScorer.swift`: `HitDetector` (trajectory vy direction-changes + audio-onset fusion) and 6-feature percentile-weighted scoring per DESIGN §3.4. AppState recomputes on every point mutation; Points panel gains star badges, Time/Score sort, top-K slider. Golden top-3 pinned for all 5 cached videos (e.g. IMG_8510: 6.6/686.8/501.2s). All suites green. New-file pbxproj registration done (explicit refs). |
