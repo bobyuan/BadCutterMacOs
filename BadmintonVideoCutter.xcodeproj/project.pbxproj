@@ -42,6 +42,7 @@
 		BB01AA02CC03DD04EE05FF06 /* SessionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */; };
 		BB01AA02CC03DD04EE05FF20 /* HighlightScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */; };
 		BB01AA02CC03DD04EE05FF22 /* ShadowEval.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF22 /* ShadowEval.swift */; };
+		BB01AA02CC03DD04EE05FF25 /* HighlightRanker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF25 /* HighlightRanker.swift */; };
 		BB01AA02CC03DD04EE05FF23 /* ModelRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF23 /* ModelRegistry.swift */; };
 		BB01AA02CC03DD04EE05FF24 /* ShadowEvalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF24 /* ShadowEvalTests.swift */; };
 		BB01AA02CC03DD04EE05FF21 /* HighlightScorerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF21 /* HighlightScorerTests.swift */; };
@@ -101,6 +102,7 @@
 		AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModels.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightScorer.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF22 /* ShadowEval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShadowEval.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF25 /* HighlightRanker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightRanker.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF23 /* ModelRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelRegistry.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF24 /* ShadowEvalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShadowEvalTests.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF21 /* HighlightScorerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightScorerTests.swift; sourceTree = "<group>"; };
@@ -246,6 +248,7 @@
 				E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */,
 				130FCCF3CFD4028AA5743646 /* FeatureExtractorStub.swift */,
 				ECA70BA0C88B15F75F25CB68 /* GameDetector.swift */,
+				AA01BB02CC03DD04EE05FF25 /* HighlightRanker.swift */,
 				AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */,
 				9BC836680D0DE302C08726D8 /* HitClassifier.swift */,
 				A6304677A7DE242E484CC7FA /* HitModelTrainer.swift */,
@@ -380,6 +383,7 @@
 				057C041BB97EB0EC320A1F6C /* ContentView.swift in Sources */,
 				9E09384924A0D1CF7334B335 /* FeatureExtractorStub.swift in Sources */,
 				BF30AA0612CF606C78F2567C /* GameDetector.swift in Sources */,
+				BB01AA02CC03DD04EE05FF25 /* HighlightRanker.swift in Sources */,
 				BB01AA02CC03DD04EE05FF20 /* HighlightScorer.swift in Sources */,
 				4DF170D04C5FF1F54531E461 /* HitClassifier.swift in Sources */,
 				5CC3249F1F265E88D6A1744B /* HitModelTrainer.swift in Sources */,

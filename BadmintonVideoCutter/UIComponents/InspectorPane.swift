@@ -112,11 +112,23 @@ struct ExportPanel: View {
             GroupBox("Options") {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Individual clip per point", isOn: $appState.exportPlan.individualClips)
+                    Toggle("Score overlay on scoring reel", isOn: $appState.exportPlan.scoreOverlay)
+                    Picker("Transition", selection: $appState.exportPlan.transition) {
+                        ForEach(TransitionStyle.allCases) { style in
+                            Text(style.rawValue).tag(style)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                     Toggle("Match source format", isOn: $appState.exportPlan.matchSourceFormat)
                     if let meta = appState.videoMetadata {
                         Text("Source: \(meta.codec) \(meta.formattedResolution). Keeps the codec (cuts snap to keyframes); off re-encodes at highest quality.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                    }
+                    if appState.exportPlan.scoreOverlay || appState.exportPlan.transition == .crossfade {
+                        Text("Overlay/crossfade reels re-encode regardless of format setting.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
                     }
                 }
                 .padding(.vertical, 2)
@@ -435,8 +447,62 @@ struct ModelsPanel: View {
                 shuttleSection
                 Divider()
                 hitDetectionSection
+                Divider()
+                rankerSection
             }
             .padding(14)
+        }
+        .onAppear { appState.refreshRankerRatingCount() }
+    }
+
+    // MARK: Highlight ranker (learned from 👍/👎 ratings)
+
+    private var rankerSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Highlight Ranker")
+                .font(.headline)
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(appState.rankerRegistry.currentVersion() != nil ? Color.green : Color.gray.opacity(0.5))
+                    .frame(width: 8, height: 8)
+                Text(appState.rankerRegistry.currentVersion() != nil
+                     ? "Personal ranker active — replaces the built-in weights"
+                     : "Using built-in heuristic weights")
+                    .font(.caption)
+            }
+
+            Text("\(appState.rankerRatingCount) rating\(appState.rankerRatingCount == 1 ? "" : "s") collected (need \(HighlightRanker.minimumRatings))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Button(appState.isTrainingRanker ? "Training…" : "Train Ranker") {
+                    appState.trainHighlightRanker()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(appState.rankerRatingCount < HighlightRanker.minimumRatings || appState.isTrainingRanker)
+
+                if !appState.rankerVersions.isEmpty {
+                    Button("Delete Ranker") {
+                        appState.deleteRanker()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(appState.isTrainingRanker)
+                }
+            }
+
+            if !appState.rankerVersions.isEmpty {
+                ModelVersionListView(
+                    versions: appState.rankerVersions,
+                    metricLabel: { meta in
+                        String(format: "conc %.2f", meta.trainingAccuracy)
+                    },
+                    onPromote: { appState.promoteRanker(version: $0) }
+                )
+            }
         }
     }
 
@@ -496,49 +562,16 @@ struct ModelsPanel: View {
 
     /// Registry versions with shadow-eval metrics; one-click promote/revert.
     private var modelVersionList: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Model Versions")
-                .font(.subheadline).bold()
-            ForEach(appState.hitModelVersions.reversed()) { meta in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(meta.versionLabel)
-                            .font(.caption).bold().monospacedDigit()
-                        if meta.promoted {
-                            Text("current")
-                                .font(.system(size: 9, weight: .semibold))
-                                .padding(.horizontal, 5).padding(.vertical, 1.5)
-                                .background(Capsule().fill(.green.opacity(0.18)))
-                                .foregroundStyle(.green)
-                        }
-                        Text(meta.trainedAt, format: .dateTime.month().day())
-                            .font(.caption2).foregroundStyle(.secondary)
-                        if meta.trainingAccuracy > 0 {
-                            Text(String(format: "%.0f%%", meta.trainingAccuracy * 100))
-                                .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
-                        }
-                        if let eval = meta.shadowEval, eval.sessionCount > 0 {
-                            Text(String(format: "F1 %.2f · ±%.1fs", eval.f1, eval.boundaryMAE))
-                                .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
-                                .help("Shadow eval over \(eval.sessionCount) corrected session(s): precision \(String(format: "%.2f", eval.precision)), recall \(String(format: "%.2f", eval.recall)), boundary MAE \(String(format: "%.2f", eval.boundaryMAE))s")
-                        }
-                        Spacer()
-                        if !meta.promoted {
-                            Button(appState.hitModelVersions.last?.id == meta.id ? "Promote" : "Revert to") {
-                                appState.promoteHitModel(version: meta.version)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                        }
-                    }
-                    if let gate = meta.gateDecision, !gate.promote, !meta.promoted {
-                        Text("Held: \(gate.reason)")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
+        ModelVersionListView(
+            versions: appState.hitModelVersions,
+            metricLabel: { meta in
+                if let eval = meta.shadowEval, eval.sessionCount > 0 {
+                    return String(format: "F1 %.2f · ±%.1fs", eval.f1, eval.boundaryMAE)
                 }
-            }
-        }
+                return meta.trainingAccuracy > 0 ? String(format: "%.0f%%", meta.trainingAccuracy * 100) : nil
+            },
+            onPromote: { appState.promoteHitModel(version: $0) }
+        )
     }
 
     @ViewBuilder
@@ -604,6 +637,55 @@ struct ModelsPanel: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Shared model-version list
+
+    struct ModelVersionListView: View {
+        var versions: [ModelVersionMetadata]
+        var metricLabel: (ModelVersionMetadata) -> String?
+        var onPromote: (Int) -> Void
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Model Versions")
+                    .font(.subheadline).bold()
+                ForEach(versions.reversed()) { meta in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(meta.versionLabel)
+                                .font(.caption).bold().monospacedDigit()
+                            if meta.promoted {
+                                Text("current")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .padding(.horizontal, 5).padding(.vertical, 1.5)
+                                    .background(Capsule().fill(.green.opacity(0.18)))
+                                    .foregroundStyle(.green)
+                            }
+                            Text(meta.trainedAt, format: .dateTime.month().day())
+                                .font(.caption2).foregroundStyle(.secondary)
+                            if let metric = metricLabel(meta) {
+                                Text(metric)
+                                    .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                            }
+                            Spacer()
+                            if !meta.promoted {
+                                Button(versions.last?.id == meta.id ? "Promote" : "Revert to") {
+                                    onPromote(meta.version)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                            }
+                        }
+                        if let gate = meta.gateDecision, !gate.promote, !meta.promoted {
+                            Text("Held: \(gate.reason)")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
                     }
                 }
             }

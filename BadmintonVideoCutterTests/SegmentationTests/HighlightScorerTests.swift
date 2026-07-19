@@ -124,6 +124,74 @@ final class HighlightScorerTests: XCTestCase {
         XCTAssertTrue(HighlightScorer.select(points: points, scores: scores, selection: .threshold(0.95)).isEmpty)
     }
 
+    // MARK: - Percentile feature vectors (shared with the learned ranker)
+
+    func testPercentileVectorsMatchHeuristicScores() {
+        let (frames, points) = syntheticFramesAndPoints()
+        let vectors = HighlightScorer.percentileFeatureVectors(points: points, frames: frames)
+        let scores = HighlightScorer.scores(points: points, frames: frames)
+        XCTAssertEqual(vectors.count, 2)
+        XCTAssertEqual(vectors[points[0].id]?.count, HighlightScorer.featureNames.count)
+
+        let w = HighlightScorer.weights
+        let weightVector = [w.duration, w.hitCount, w.tempo, w.maxShuttleSpeed, w.avgMotion, w.climax]
+        for point in points {
+            let manual = zip(vectors[point.id]!, weightVector).reduce(0) { $0 + $1.0 * $1.1 }
+            XCTAssertEqual(manual, scores[point.id]!, accuracy: 0.0001)
+        }
+    }
+
+    // MARK: - Ranker concordance
+
+    func testConcordancePerfectAndInverted() {
+        let perfect: [(score: Double, liked: Bool)] = [(0.9, true), (0.8, true), (0.2, false), (0.1, false)]
+        XCTAssertEqual(HighlightRanker.concordance(of: perfect)!, 1.0, accuracy: 0.001)
+
+        let inverted: [(score: Double, liked: Bool)] = [(0.1, true), (0.9, false)]
+        XCTAssertEqual(HighlightRanker.concordance(of: inverted)!, 0.0, accuracy: 0.001)
+
+        let ties: [(score: Double, liked: Bool)] = [(0.5, true), (0.5, false)]
+        XCTAssertEqual(HighlightRanker.concordance(of: ties)!, 0.5, accuracy: 0.001)
+    }
+
+    func testConcordanceNilForSingleClass() {
+        XCTAssertNil(HighlightRanker.concordance(of: [(0.9, true), (0.8, true)]))
+    }
+
+    func testRankerTrainAndPredictSeparatesClasses() async throws {
+        // Liked points have high duration+tempo percentiles; disliked low.
+        var samples: [HighlightRanker.RatedSample] = []
+        for i in 0..<20 {
+            let jitter = Double(i) / 200.0
+            samples.append(HighlightRanker.RatedSample(
+                features: [0.8 + jitter / 4, 0.7, 0.8, 0.7, 0.6, 0.7], liked: true))
+            samples.append(HighlightRanker.RatedSample(
+                features: [0.2 - jitter / 4, 0.3, 0.2, 0.3, 0.4, 0.3], liked: false))
+        }
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ranker_test_\(UUID().uuidString).mlmodelc")
+        addTeardownBlock { try? FileManager.default.removeItem(at: out) }
+
+        let concordance = try await HighlightRanker.train(samples: samples, outputModelURL: out)
+        XCTAssertGreaterThan(concordance, 0.95)
+
+        let model = try XCTUnwrap(HighlightRanker.loadModel(at: out))
+        let high = try XCTUnwrap(HighlightRanker.predict(model: model, features: [0.9, 0.8, 0.9, 0.8, 0.7, 0.8]))
+        let low = try XCTUnwrap(HighlightRanker.predict(model: model, features: [0.1, 0.2, 0.1, 0.2, 0.3, 0.2]))
+        XCTAssertGreaterThan(high, low)
+    }
+
+    func testRankerRefusesTooFewRatings() async {
+        let samples = [HighlightRanker.RatedSample(features: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5], liked: true)]
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("ranker_few.mlmodelc")
+        do {
+            _ = try await HighlightRanker.train(samples: samples, outputModelURL: out)
+            XCTFail("Expected notEnoughRatings")
+        } catch {
+            XCTAssertTrue("\(error)".contains("notEnoughRatings"))
+        }
+    }
+
     // MARK: - Golden tests over the 5 cached videos
 
     /// Start times (s) of the top-3 points by highlight score, per video.

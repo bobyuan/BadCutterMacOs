@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import SwiftUI
+import CoreML
 
 @MainActor
 final class AppState: ObservableObject {
@@ -51,6 +52,14 @@ final class AppState: ObservableObject {
     @Published var useHitModel: Bool = true
     @Published var hitModelVersions: [ModelVersionMetadata] = []
     let hitModelRegistry = ModelRegistry(modelName: "hit_classifier")
+
+    // MARK: - Highlight Ranker State
+    @Published var rankerVersions: [ModelVersionMetadata] = []
+    @Published var rankerRatingCount = 0
+    @Published var isTrainingRanker = false
+    let rankerRegistry = ModelRegistry(modelName: HighlightRanker.modelName)
+    private var rankerModel: MLModel?
+    private var rankerModelVersion: Int?
 
     // MARK: - Training Pool State
     @Published var trainingPoolStatus: TrainingPoolStatus = .empty
@@ -127,10 +136,115 @@ final class AppState: ObservableObject {
             hitModelStatus = .trained(accuracy: meta.trainingAccuracy, clipCount: meta.clipCount)
         }
         refreshTrainingPool()
+        rankerVersions = rankerRegistry.versions()
+        refreshRankerRatingCount()
     }
 
     func refreshHitModelVersions() {
         hitModelVersions = hitModelRegistry.versions()
+    }
+
+    // MARK: - Highlight Ranker
+
+    func refreshRankerState() {
+        rankerVersions = rankerRegistry.versions()
+        // Invalidate the cached model when the pointer moved.
+        if rankerModelVersion != rankerRegistry.currentVersion() {
+            rankerModel = nil
+            rankerModelVersion = nil
+        }
+        refreshHighlightScores()
+    }
+
+    /// Recount ratings across all sessions (cheap file scan, off-main).
+    func refreshRankerRatingCount() {
+        let store = sessionStore
+        let root = store.root
+        Task {
+            let count = await Task.detached {
+                HighlightRanker.collectSamples(store: store, sessionsRoot: root).count
+            }.value
+            rankerRatingCount = count
+        }
+    }
+
+    func trainHighlightRanker() {
+        isTrainingRanker = true
+        statusMessage = "Training highlight ranker…"
+        let store = sessionStore
+        let root = store.root
+
+        Task {
+            do {
+                let samples = await Task.detached {
+                    HighlightRanker.collectSamples(store: store, sessionsRoot: root)
+                }.value
+                rankerRatingCount = samples.count
+
+                let candidateURL = hitModelOutputURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("candidate_highlight_ranker.mlmodelc")
+                let concordance = try await HighlightRanker.train(samples: samples, outputModelURL: candidateURL)
+
+                var meta = try rankerRegistry.addVersion(
+                    compiledModelAt: candidateURL,
+                    clipCount: samples.count,
+                    trainingAccuracy: concordance,
+                    notes: "\(samples.count) ratings"
+                )
+
+                // Same gate shape as the hit model: concordance must not regress.
+                let currentMeta = rankerRegistry.currentVersion()
+                    .flatMap { rankerRegistry.metadata(forVersion: $0) }
+                let decision: ShadowEval.GateDecision
+                if let current = currentMeta, current.trainingAccuracy > 0,
+                   concordance < current.trainingAccuracy - 0.02 {
+                    decision = ShadowEval.GateDecision(
+                        promote: false,
+                        reason: String(format: "Concordance regressed: %.2f vs current %.2f.", concordance, current.trainingAccuracy)
+                    )
+                } else {
+                    decision = ShadowEval.GateDecision(
+                        promote: true,
+                        reason: String(format: "Concordance %.2f over %d ratings.", concordance, samples.count)
+                    )
+                }
+                meta.gateDecision = decision
+                try? rankerRegistry.save(meta)
+
+                if decision.promote {
+                    rankerRegistry.promote(version: meta.version)
+                    statusMessage = "Ranker \(meta.versionLabel) trained and promoted — \(decision.reason)"
+                } else {
+                    statusMessage = "Ranker \(meta.versionLabel) trained but NOT promoted — \(decision.reason)"
+                }
+                refreshRankerState()
+            } catch {
+                lastErrorMessage = error.localizedDescription
+            }
+            isTrainingRanker = false
+        }
+    }
+
+    func promoteRanker(version: Int) {
+        rankerRegistry.promote(version: version)
+        refreshRankerState()
+        statusMessage = String(format: "Now ranking highlights with v%03d.", version)
+    }
+
+    func deleteRanker() {
+        rankerRegistry.removeAll()
+        refreshRankerState()
+        statusMessage = "Highlight ranker deleted — back to the built-in heuristic."
+    }
+
+    /// The promoted ranker model, loaded lazily and cached per version.
+    private func loadedRankerModel() -> MLModel? {
+        guard let version = rankerRegistry.currentVersion() else { return nil }
+        if rankerModelVersion == version, let rankerModel { return rankerModel }
+        rankerModel = HighlightRanker.loadModel(at: rankerRegistry.modelURL(forVersion: version))
+        rankerModelVersion = rankerModel != nil ? version : nil
+        return rankerModel
     }
 
     // MARK: - Computed Properties
@@ -789,9 +903,27 @@ final class AppState: ObservableObject {
         refreshHighlightScores()
     }
 
-    /// Recompute heuristic highlight scores for the active points.
+    /// Recompute highlight scores for the active points: the promoted personal
+    /// ranker when one exists, else the built-in heuristic weights.
     func refreshHighlightScores() {
         let activePoints = games.flatMap(\.points).filter { $0.reviewStatus != .deleted }
+        if let model = loadedRankerModel() {
+            let vectors = HighlightScorer.percentileFeatureVectors(points: activePoints, frames: featureFrames)
+            var scores: [UUID: Double] = [:]
+            var failed = false
+            for (id, vector) in vectors {
+                if let score = HighlightRanker.predict(model: model, features: vector) {
+                    scores[id] = score
+                } else {
+                    failed = true
+                    break
+                }
+            }
+            if !failed {
+                highlightScores = scores
+                return
+            }
+        }
         highlightScores = HighlightScorer.scores(points: activePoints, frames: featureFrames)
     }
 
@@ -1375,19 +1507,30 @@ final class AppState: ObservableObject {
 
         let scoringSegments = effectiveKeptSegments
         let highlights = highlightReelPoints
+        let fade: TimeInterval = exportPlan.transition == .crossfade ? 0.5 : 0
 
         if exportPlan.reels.contains(.scoring), !scoringSegments.isEmpty {
+            // Score overlay needs per-point alignment; only possible when the
+            // game structure exists (segments == active points' rally segments).
+            let active = activePoints
+            var overlays: [String?]?
+            if exportPlan.scoreOverlay, !active.isEmpty, active.count == scoringSegments.count {
+                overlays = active.map { pointScores[$0.id]?.display }
+            }
             jobs.append(ExportJob(
                 label: "Scoring reel",
                 outputURL: base.appendingPathExtension("scoring.mov"),
-                segments: scoringSegments
+                segments: scoringSegments,
+                overlayTexts: overlays,
+                crossfade: fade
             ))
         }
         if exportPlan.reels.contains(.highlights), !highlights.isEmpty {
             jobs.append(ExportJob(
                 label: "Highlight reel",
                 outputURL: base.appendingPathExtension("highlights.mov"),
-                segments: highlights.map(\.rallySegment)
+                segments: highlights.map(\.rallySegment),
+                crossfade: fade
             ))
         }
         if exportPlan.individualClips {

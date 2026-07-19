@@ -132,8 +132,13 @@ enum HighlightScorer {
         return f
     }
 
-    /// Score each point against the others in the same video.
-    static func scores(points: [GamePoint], frames: [FeatureFrame]) -> [UUID: Double] {
+    /// Feature order shared by the heuristic weights and the learned ranker.
+    static let featureNames = ["duration", "hitCount", "tempo", "maxShuttleSpeed", "avgMotion", "climax"]
+
+    /// Per-point features normalized to their in-video percentile, in
+    /// `featureNames` order. Scale-free, so they compare across videos —
+    /// both the heuristic and the learned ranker consume these.
+    static func percentileFeatureVectors(points: [GamePoint], frames: [FeatureFrame]) -> [UUID: [Double]] {
         guard !points.isEmpty else { return [:] }
         let featureList = points.map { features(for: $0.rallySegment, frames: frames) }
 
@@ -145,23 +150,25 @@ enum HighlightScorer {
             }
         }
 
-        let duration = percentiles(\.duration)
-        let hitCount = percentiles(\.hitCount)
-        let tempo = percentiles(\.tempo)
-        let maxSpeed = percentiles(\.maxShuttleSpeed)
-        let motion = percentiles(\.avgMotion)
-        let climax = percentiles(\.climax)
-
-        var result: [UUID: Double] = [:]
+        let columns = [
+            percentiles(\.duration), percentiles(\.hitCount), percentiles(\.tempo),
+            percentiles(\.maxShuttleSpeed), percentiles(\.avgMotion), percentiles(\.climax)
+        ]
+        var result: [UUID: [Double]] = [:]
         for (i, point) in points.enumerated() {
-            result[point.id] = duration[i] * weights.duration
-                + hitCount[i] * weights.hitCount
-                + tempo[i] * weights.tempo
-                + maxSpeed[i] * weights.maxShuttleSpeed
-                + motion[i] * weights.avgMotion
-                + climax[i] * weights.climax
+            result[point.id] = columns.map { $0[i] }
         }
         return result
+    }
+
+    /// Score each point against the others in the same video (fixed weights).
+    static func scores(points: [GamePoint], frames: [FeatureFrame]) -> [UUID: Double] {
+        let vectors = percentileFeatureVectors(points: points, frames: frames)
+        let w = [weights.duration, weights.hitCount, weights.tempo,
+                 weights.maxShuttleSpeed, weights.avgMotion, weights.climax]
+        return vectors.mapValues { vector in
+            zip(vector, w).reduce(0) { $0 + $1.0 * $1.1 }
+        }
     }
 
     // MARK: - Highlight Selection
