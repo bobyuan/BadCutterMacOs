@@ -13,7 +13,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 - [x] Commit training-pool work on `main` (`8b82745`)
 - [x] Create `v2-redesign` branch
 - [x] DESIGN.md, PROGRESS.md, DECISIONS.md
-- [~] ML model research (background) → fold into DESIGN.md §5
+- [x] ML model research → DESIGN.md §5 (keep TrackNetV3; adopt trajectory hit
+      detection + audio onset upgrade + cheer signal; watch BST/RTMPose)
 - [x] User picked UI direction: **A "Studio"** → DECISIONS.md D-003
 
 ## Phase 1 — Corrections Ledger (keystone)
@@ -82,3 +83,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | Date | What happened |
 |---|---|
 | 2026-07-18 | Reviewed codebase (pipeline + UI/feedback-loop audit). Identified gaps G1–G8. Committed training-pool refactor to `main` (`8b82745`). Created `v2-redesign`. Wrote DESIGN/PROGRESS/DECISIONS docs. Launched background research on badminton ML models (TrackNet successors, ShuttleSet/CoachAI, pose, audio, highlights). |
+| 2026-07-18 | ML research completed → DESIGN.md §5: TrackNetV3 stays (open SOTA); adopt trajectory-based hit detection (Sensors 2024, F1 90.5 fused) + vDSP audio onsets + SNClassifySoundRequest cheer signal; noted competitor RallyCut. User picked UI Option A "Studio". Started Phase 1 (corrections ledger). |

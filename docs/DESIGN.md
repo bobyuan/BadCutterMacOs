@@ -296,12 +296,57 @@ intact into the center pane; `PointListView` into the inspector.
 
 ---
 
-## 5. ML model upgrades
+## 5. ML model upgrades (research findings, 2026-07-18)
 
-*(Section pending: background research in progress on TrackNetV4/WASB-family shuttle
-trackers, ShuttleSet/CoachAI badminton datasets & shot classification, pose-based hit
-detection, fine-tuned audio event models, and highlight-detection literature. Findings
-and adopt/watch/skip recommendations will be appended here as §5.1–5.7.)*
+Web research across shuttle trackers, badminton datasets, pose, audio, and highlight
+literature; 21 load-bearing claims verified against primary sources. **Headline: the
+current architecture is validated by 2024–2026 literature** — shuttle-trajectory
+presence/gradients *are* the published basis for rally-boundary detection, and nothing
+openly licensed clearly beats TrackNetV3 on badminton. The wins are additions, not swaps.
+
+### 5.1 Adopt
+
+| What | Why | How |
+|---|---|---|
+| **Trajectory-based hit detection** (Sensors 2024, [mdpi.com/1424-8220/24/13/4372](https://www.mdpi.com/1424-8220/24/13/4372)) | Hits from TrackNet trajectory alone (y-peak + direction-change identification) = F1 72.3%; fused with a swing/audio signal → **F1 90.5%** on 69 BWF matches. Zero new ML — pure math over existing `shuttlecockPosition`. | New `HitDetector` over FeatureFrames → per-hit timestamps. Improves `splitLongRallies` dips, gives **shot counts** for §3.4 highlight features. Slot into Phase 4. |
+| **Audio hit-timing upgrade** | `MLSoundClassifier` (frozen VGGish head, ≥0.5s windows) is structurally incapable of ms-accurate hits — matches the observed 0.00/0.25 quantization. Literature: energy-peak onsets alone = 91% precision (Tsinghua); audio+visual+timing fusion adds 10–30 F1 pts (IBM AVSP 2011). | vDSP energy-peak onset detection (no ML), windows gated by trajectory direction-changes. Keep MLSoundClassifier for coarse rally/break only. Phase 4/8. |
+| **Crowd-excitement signal** | Apple's built-in `SNClassifySoundRequest` (macOS 12+) ships 300+ classes incl. applause/cheering — free highlight feature, no model to ship. | Add `cheerScore` per point → highlight scorer §3.4. |
+| **Highlight recipe validated** | Duration + shot count + motion stats + cheer is exactly what commercial systems (IBM US Open, WSC) use; CASA 2020 ranked badminton segments by player velocity. | Confirms §3.4 design as-is. |
+
+### 5.2 Watch (revisit when the feature matters)
+
+- **TrackNetV4** (ICASSP 2025, MIT): motion-attention module, ~+0.5pt over V3 — only try
+  if fast-smash tracking failures show up. [github.com/TrackNetV4](https://github.com/TrackNetV4/TrackNetV4)
+- **WASB** (BMVC 2023, MIT, NTT): 1.5M-param HRNet, very ANE-friendly — adopt only if V3
+  speed/size becomes a problem. [github.com/nttcom/WASB-SBDT](https://github.com/nttcom/WASB-SBDT)
+- **BST stroke-type transformer** (CVPRW 2026, MIT, 1.87M params): smash/clear/drop/net
+  classification from RTMPose joints + TrackNetV3 trajectory — the big *shot-stats*
+  feature unlock, at the cost of adding pose. [github.com/Va6lue/BST-Badminton-Stroke-type-Transformer](https://github.com/Va6lue/BST-Badminton-Stroke-type-Transformer)
+- **Pose**: skip for rally segmentation (BST ablation: trajectory ≈ 4× more signal than
+  player position). If added later for serve/hit attribution: prototype with Apple Vision
+  `VNDetectHumanBodyPoseRequest` (free, multi-person 2D), upgrade to RTMPose-m
+  (Apache-2.0) via ONNX→CoreML if far-court players fail.
+- **Datasets**: ShuttleSet (MIT, 36,492 strokes w/ hit frames) for ground truth;
+  BFMD (19 matches, 1,687 rally boundaries) is ideal but **has no license — contact
+  authors first**. [github.com/wywyWang/CoachAI-Projects](https://github.com/wywyWang/CoachAI-Projects)
+- **Scoreboard OCR** (`VNRecognizeTextRequest` + scoring finite automaton, arXiv
+  1801.01430): only relevant if users import broadcast footage.
+
+### 5.3 Skip
+
+TrackNetV5 (proprietary weights, no license) · MonoTrack (Adobe noncommercial license)
+· YOLO-family shuttle detectors (single-frame trails temporal heatmaps; Ultralytics is
+AGPL) · Sapiens pose (CC-BY-NC) · Moment-DETR/UniVTG highlight models (text-query
+grounding, overkill).
+
+### 5.4 Competitive note
+
+**RallyCut** (App Store id6752290110, $9.99/yr, active solo dev) already does on-device
+rally auto-clipping + dead-time removal for badminton on macOS — rally cutting alone is
+table stakes. Differentiators per this design: **highlight ranking that learns your
+taste** (§3.4-B), **score overlay** (§3.3), the **correct-and-learn loop** (§3.5), and
+shot-type stats later (BST). Feature classes surfaced by Chinese competitors worth
+borrowing eventually: smash detection, net saves, longest exchanges, top-20 rallies.
 
 ---
 
