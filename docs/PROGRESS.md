@@ -84,14 +84,25 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 - [x] Per-reel summary (pre-export estimates from source bitrate + post-export
       actuals with show-in-Finder); removed dead `ExportConfig`/`ExportMode`
 
-## Phase 6 — Model Lifecycle + Config Unification
+## Phase 6 — Model Lifecycle + Config Unification ✅
 
-- [ ] Versioned model registry (`models/<name>/vNNN/` + metadata + current pointer)
-- [ ] Shadow eval: replay corrected sessions, precision/recall/boundary-MAE, gate
-- [ ] Promote/revert UI in Models panel
-- [ ] Move hardcoded `HybridSegmenter` constants into `AnalysisConfig` (tests pin
+- [x] Versioned model registry (`models/<name>/vNNN/` + metadata.json +
+      `current.json` pointer; legacy flat model migrates to promoted v001 —
+      verified live)
+- [x] Shadow eval: replay corrected sessions' cached frames through the
+      pipeline; IoU≥0.5 matching → precision/recall/F1, boundary MAE,
+      added-point recall; gate holds on F1 regression (ε 0.02) or added-point
+      recall drop. NOTE: replay evaluates the segmentation over cached frames —
+      candidate-vs-current audio scoring differences need audio re-extraction
+      (deferred to Phase 8 with the vDSP onset upgrade)
+- [x] Promote/revert UI in Models panel (version list with metrics + held-gate
+      reason; one-click Promote / Revert to)
+- [x] Move hardcoded `HybridSegmenter` constants into `AnalysisConfig` (19
+      fields: blend weights, Otsu clamp, merge/roll constants, dip weights +
+      sensitivity ladder; defaults identical — golden + segmentation suites pin
       behavior unchanged)
-- [ ] `ShadowEvalTests`
+- [x] `ShadowEvalTests` (12 tests: IoU, matching, aggregation, gate, registry
+      round-trip/promote/revert/migration)
 
 ## Phase 7 — Learned Ranker + Polish
 
@@ -116,3 +127,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | 2026-07-18 | **Phase 3 complete** (`0ff1912`). Add Point button in timeline footer (bare "A" shortcut) inserts an undoable `pointAdded` correction with high-audio-window default span. Review chips per point row derived from the ledger; 👍/👎 buttons record `highlightRated` events and survive session restore. 7 new span-heuristic tests; SegmentUtils + SessionStore suites green; build clean; UI render verified by screenshot (interactive flow needs a video analysis — not yet exercised). |
 | 2026-07-19 | **Phase 4 complete** (`19b7b76`). New `HighlightScorer.swift`: `HitDetector` (trajectory vy direction-changes + audio-onset fusion) and 6-feature percentile-weighted scoring per DESIGN §3.4. AppState recomputes on every point mutation; Points panel gains star badges, Time/Score sort, top-K slider. Golden top-3 pinned for all 5 cached videos (e.g. IMG_8510: 6.6/686.8/501.2s). All suites green. New-file pbxproj registration done (explicit refs). |
 | 2026-07-19 | **Phase 5 complete** (`3edc392`). ExportPlan/ExportOutput models, HighlightScorer.select policies, job-based VideoExporter with passthrough+fallback, rebuilt Export panel (reel toggles, selection slider, estimates, results). **Full E2E verified via UI automation on IMG_6155.rallies.mov**: import → analyze (11 pts) → chips/👍(confirmed chip)/score-sort/top-K → Add Point (added chip, renumber, rescore) → ⌘Z undo (rating survives) → dual-reel export (h264 passthrough, 65.1s + 22.0s, sizes shown). Known polish: point rows too cramped at min inspector width (chips/badges wrap). |
+| 2026-07-19 | **Phase 6 complete** (`4a8e1c7`). ModelRegistry (vNNN dirs + current pointer, legacy migration verified live in app), ShadowEval engine + promotion gate, trainFromPool now train→register→shadow-eval→gate→promote/hold, Models panel version list w/ metrics + promote/revert. 19 shuttle-primary constants lifted into AnalysisConfig, defaults pinned by test suites (all green incl. goldens). Limitation noted: shadow replay can't yet re-score audio with a candidate model (needs audio re-extraction — Phase 8). |

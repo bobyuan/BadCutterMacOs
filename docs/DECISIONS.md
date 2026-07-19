@@ -65,3 +65,20 @@ with a stable ID. Append-only undo preserves the full audit trail (an undone act
 still visible in history).
 **Rejected:** Logging trim IDs (dangling refs); truncating the ledger on undo (loses
 audit; complicates concurrent readers).
+
+## D-007 · 2026-07-19 · Shadow eval replays segmentation, not audio scoring
+
+**Decision:** Phase 6's shadow evaluation replays each corrected session's *cached
+frames* through `HybridSegmenter → TrajectoryAnalyzer` and scores against the user's
+corrections. The gate compares a candidate's corpus metrics to the metrics *stored*
+on the currently promoted version (recorded when it was trained, over the corpus as
+it existed then).
+**Why:** A candidate hit model influences `audioScore` during feature extraction —
+re-scoring audio without video decode needs an audio-only re-extraction path, which
+lands naturally with the vDSP onset upgrade (DESIGN §5.1, Phase 8). Until then the
+replay still catches the real regression class (segmentation/config drift vs corrected
+truth) and the corpus grows with every reviewed video, so stored-vs-fresh comparison
+becomes stricter over time.
+**Rejected:** Full re-extraction per candidate (minutes per video, defeats "seconds,
+no video decode"); skipping the gate until Phase 8 (loses the registry/eval plumbing
+and the regression corpus that Phase 7's ranker also needs).
