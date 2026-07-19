@@ -41,6 +41,9 @@
 		B1C2D3E4F5A6B7C8D9E0F1A2 /* TrainingPoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */; };
 		BB01AA02CC03DD04EE05FF06 /* SessionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */; };
 		BB01AA02CC03DD04EE05FF20 /* HighlightScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */; };
+		BB01AA02CC03DD04EE05FF22 /* ShadowEval.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF22 /* ShadowEval.swift */; };
+		BB01AA02CC03DD04EE05FF23 /* ModelRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF23 /* ModelRegistry.swift */; };
+		BB01AA02CC03DD04EE05FF24 /* ShadowEvalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF24 /* ShadowEvalTests.swift */; };
 		BB01AA02CC03DD04EE05FF21 /* HighlightScorerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF21 /* HighlightScorerTests.swift */; };
 		BB01AA02CC03DD04EE05FF07 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF07 /* SessionStore.swift */; };
 		BB01AA02CC03DD04EE05FF08 /* SessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */; };
@@ -97,6 +100,9 @@
 		A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingPoolTests.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModels.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightScorer.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF22 /* ShadowEval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShadowEval.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF23 /* ModelRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelRegistry.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF24 /* ShadowEvalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShadowEvalTests.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF21 /* HighlightScorerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightScorerTests.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF07 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStoreTests.swift; sourceTree = "<group>"; };
@@ -144,6 +150,7 @@
 			children = (
 				CB2C787EE892C2DD3A4BB3AB /* SegmentUtilsTests.swift */,
 				AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */,
+				AA01BB02CC03DD04EE05FF24 /* ShadowEvalTests.swift */,
 			);
 			path = DomainTests;
 			sourceTree = "<group>";
@@ -244,6 +251,7 @@
 				A6304677A7DE242E484CC7FA /* HitModelTrainer.swift */,
 				F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */,
 				CE014B1EC6003E8BF9511DCF /* ServeDetector.swift */,
+				AA01BB02CC03DD04EE05FF22 /* ShadowEval.swift */,
 				B4E917A3D62C8F0E5A1B73D9 /* ShuttlecockDetector.swift */,
 				D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */,
 			);
@@ -255,6 +263,7 @@
 			children = (
 				7D714636820FFCF947786C2A /* ModelManifest.swift */,
 				44452A77F3373C5C02934EAD /* ModelPackageService.swift */,
+				AA01BB02CC03DD04EE05FF23 /* ModelRegistry.swift */,
 			);
 			path = ModelMgmt;
 			sourceTree = "<group>";
@@ -348,6 +357,7 @@
 				21BB9C29BC55D238F9AFDE6D /* HybridSegmenterTests.swift in Sources */,
 				94C4A7DEAC0442730297BB4C /* SegmentUtilsTests.swift in Sources */,
 				BB01AA02CC03DD04EE05FF08 /* SessionStoreTests.swift in Sources */,
+				BB01AA02CC03DD04EE05FF24 /* ShadowEvalTests.swift in Sources */,
 				D8B9C0E1F2A3B4C5D6E7F8A9 /* ShuttlecockDetectorTests.swift in Sources */,
 				A5B6C7D8E9F0A1B2C3D4E5F6 /* TrajectoryAnalyzerTests.swift in Sources */,
 				B1C2D3E4F5A6B7C8D9E0F1A2 /* TrainingPoolTests.swift in Sources */,
@@ -376,6 +386,8 @@
 				ED06773894EB74D348455AF8 /* HybridSegmenter.swift in Sources */,
 				C5319294A168FCB7B15C7A7B /* ModelManifest.swift in Sources */,
 				5CC8F05945B3C9D77742DFA8 /* ModelPackageService.swift in Sources */,
+				BB01AA02CC03DD04EE05FF23 /* ModelRegistry.swift in Sources */,
+				BB01AA02CC03DD04EE05FF22 /* ShadowEval.swift in Sources */,
 				037DACC7DBB40A439212D1F1 /* Models.swift in Sources */,
 				80B054321EC6A50E5240CFDF /* PointListView.swift in Sources */,
 				43E222E482AA3DC63053D866 /* Protocols.swift in Sources */,

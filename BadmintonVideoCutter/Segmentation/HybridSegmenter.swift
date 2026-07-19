@@ -4,14 +4,16 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     func classify(frames: [FeatureFrame], config: AnalysisConfig) -> [TimeSegment] {
         guard frames.count > 1 else { return [] }
 
-        let shuttlePrimary = useShuttlePrimary(frames: frames)
+        let shuttlePrimary = useShuttlePrimary(frames: frames, config: config)
         let combinedScores = computeCombinedScores(frames: frames, shuttlePrimary: shuttlePrimary, config: config)
 
         // Shuttle-primary: Otsu's method finds optimal binary split for the bimodal
         // score distribution. Adapts per-video (e.g. ~0.37 for both IMG_8510 and IMG_6156).
-        // Clamped to [0.25, 0.55] to prevent pathological edge cases.
+        // Clamped to prevent pathological edge cases.
         // Fallback: adaptive percentile for the continuous motion score distribution.
-        let threshold = shuttlePrimary ? otsuThreshold(combinedScores, min: 0.25, max: 0.55) : percentile(combinedScores, p: config.rallyPercentile)
+        let threshold = shuttlePrimary
+            ? otsuThreshold(combinedScores, min: config.shuttleOtsuClampMin, max: config.shuttleOtsuClampMax)
+            : percentile(combinedScores, p: config.rallyPercentile)
         let labels = combinedScores.map { $0 >= threshold ? SegmentLabel.rally : SegmentLabel.betweenPoints }
 
         var segments: [TimeSegment] = []
@@ -41,17 +43,17 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     }
 
     func postProcess(segments: [TimeSegment], frames: [FeatureFrame], config: AnalysisConfig) -> [TimeSegment] {
-        let shuttlePrimary = useShuttlePrimary(frames: frames)
+        let shuttlePrimary = useShuttlePrimary(frames: frames, config: config)
         let valid = SegmentUtils.removeInvalid(segments)
 
         // Shuttle-primary: tighter merge gap — the shuttle position signal is precise,
         // so don't over-merge. Fallback: original hysteresis for noisy motion signal.
-        let mergeGap = shuttlePrimary ? 0.5 : config.flipHysteresisSeconds
+        let mergeGap = shuttlePrimary ? config.shuttleMergeGap : config.flipHysteresisSeconds
         let merged = SegmentUtils.mergeAdjacent(valid, maxGap: mergeGap)
 
         // Shuttle-primary: shorter min break — shuttle absence gaps are brief (2-3s)
         // even though the actual between-point pause is longer.
-        let minBreak = shuttlePrimary ? 1.5 : config.minBetweenPointsDuration
+        let minBreak = shuttlePrimary ? config.shuttleMinBreak : config.minBetweenPointsDuration
         let filtered = merged.filter {
             if $0.label == .rally { return $0.duration >= config.minRallyDuration }
             if $0.label == .betweenPoints { return $0.duration >= minBreak }
@@ -63,8 +65,8 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         // at point end). Large pre/post roll (2.5+1.5=4.0s) would consume real breaks
         // that are only 2-4s long. Fallback: original generous pre/post roll for the
         // noisy motion signal which may start/end classification late.
-        let preRoll = shuttlePrimary ? 0.5 : config.preRollSeconds
-        let postRoll = shuttlePrimary ? 0.5 : config.postRollSeconds
+        let preRoll = shuttlePrimary ? config.shuttlePreRollSeconds : config.preRollSeconds
+        let postRoll = shuttlePrimary ? config.shuttlePostRollSeconds : config.postRollSeconds
         let preRolled = applyPreRoll(segments: filtered, preRoll: preRoll)
         let postRolled = applyPostRoll(segments: preRolled, postRoll: postRoll)
         // Iterative splitting: first pass may produce sub-rallies still over maxDuration.
@@ -79,7 +81,7 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         // Final cleanup: absorb tiny rally/break fragments, merge consecutive same-label.
         // Shuttle-primary: aggressive dip splitting creates short rally fragments (1-3s)
         // from brief motion bursts between dips. These aren't real points — absorb them.
-        let minRally = shuttlePrimary ? 3.0 : config.minRallyDuration
+        let minRally = shuttlePrimary ? config.shuttleMinRallyAbsorb : config.minRallyDuration
         let absorbed = split.map { seg -> TimeSegment in
             if seg.label == .rally && seg.duration < minRally {
                 return TimeSegment(start: seg.start, end: seg.end, label: .betweenPoints, confidence: 0.3)
@@ -87,10 +89,10 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
             return seg
         }
         let cleaned = SegmentUtils.removeInvalid(absorbed)
-        // Merge gap of 2.0s: absorbed fragments create small gaps between consecutive
+        // Final merge gap: absorbed fragments create small gaps between consecutive
         // break segments that need bridging. This is safe because rally segments
-        // separated by < 2s would have been classified as a single rally.
-        return SegmentUtils.mergeAdjacent(cleaned, maxGap: 2.0)
+        // separated by less than the gap would have been classified as one rally.
+        return SegmentUtils.mergeAdjacent(cleaned, maxGap: config.finalMergeGap)
     }
 
     // MARK: - Combined Score Computation
@@ -101,7 +103,7 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     /// Falls back to original motion+audio formula when no ML data.
     private func computeCombinedScores(frames: [FeatureFrame], shuttlePrimary: Bool, config: AnalysisConfig) -> [Double] {
         if shuttlePrimary {
-            // Blend: presence (40%) + flight-motion (30%) + motion (20%) + audio (10%)
+            // Blend: presence + flight-motion + motion + audio (weights in config).
             // Presence captures shuttle disappearance during breaks.
             // Flight-motion (flightScore - motionScore, smoothed) captures rallies where
             // shuttle is confidently detected with low player motion. Complementary to
@@ -110,7 +112,10 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
             let presenceScores = computeShuttlePresenceScores(frames: frames)
             let flightMotionScores = computeFlightMotionScores(frames: frames)
             return frames.indices.map { i in
-                min(0.40 * presenceScores[i] + 0.30 * flightMotionScores[i] + 0.20 * frames[i].motionScore + 0.10 * frames[i].audioScore, 1.0)
+                min(config.shuttleBlendPresenceWeight * presenceScores[i]
+                    + config.shuttleBlendFlightMotionWeight * flightMotionScores[i]
+                    + config.shuttleBlendMotionWeight * frames[i].motionScore
+                    + config.shuttleBlendAudioWeight * frames[i].audioScore, 1.0)
             }
         } else {
             // Fallback: original motion + audio bonus (no ML data)
@@ -153,13 +158,13 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
         return rollingAverage(raw, windowSize: 15)
     }
 
-    /// Returns true when ML shuttle position data is meaningfully present.
-    /// Requires >10% of frames to have position data (ML model was active).
-    private func useShuttlePrimary(frames: [FeatureFrame]) -> Bool {
+    /// Returns true when ML shuttle position data is meaningfully present
+    /// (enough frames carry a position for the ML signal to be trusted).
+    private func useShuttlePrimary(frames: [FeatureFrame], config: AnalysisConfig) -> Bool {
         guard !frames.isEmpty else { return false }
         let positionCount = frames.filter { $0.shuttlecockPosition != nil }.count
         let positionRate = Double(positionCount) / Double(frames.count)
-        return positionRate > 0.10
+        return positionRate > config.shuttlePositionRateThreshold
     }
 
     // MARK: - Rally Splitting
@@ -169,14 +174,14 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
     private func splitLongRallies(segments: [TimeSegment], frames: [FeatureFrame], config: AnalysisConfig) -> [TimeSegment] {
         guard !frames.isEmpty else { return segments }
 
-        let shuttlePrimary = useShuttlePrimary(frames: frames)
+        let shuttlePrimary = useShuttlePrimary(frames: frames, config: config)
 
         var result: [TimeSegment] = []
 
-        // Shuttle-primary: lower the duration threshold from 25s to 15s.
-        // Badminton rallies rarely exceed 15s. The original 25s threshold misses
-        // 20-24s segments that contain 2 points with a bird-pickup pause between.
-        let maxDuration = shuttlePrimary ? 15.0 : config.maxExpectedRallyDuration
+        // Shuttle-primary: lower duration threshold — badminton rallies rarely
+        // exceed 15s; the fallback threshold misses 20-24s segments containing
+        // 2 points with a bird-pickup pause between.
+        let maxDuration = shuttlePrimary ? config.shuttleMaxRallyDuration : config.maxExpectedRallyDuration
 
         for segment in segments {
             guard segment.label == .rally && segment.duration > maxDuration else {
@@ -218,27 +223,24 @@ final class HybridSegmenter: SegmentClassifier, SegmentPostProcessor {
                 // dipScore: high = likely break, low = likely rally
                 // Invert so low = dip, high = active (consistent with findDips)
                 scores = (0..<rallyFrames.count).map { i in
-                    let dipScore = 0.35 * (1 - presNorm[i])
-                                 + 0.30 * (1 - fmNorm[i])
-                                 + 0.20 * (1 - motionNorm[i])
-                                 + 0.15 * (1 - audioNorm[i])
+                    let dipScore = config.dipPresenceWeight * (1 - presNorm[i])
+                                 + config.dipFlightMotionWeight * (1 - fmNorm[i])
+                                 + config.dipMotionWeight * (1 - motionNorm[i])
+                                 + config.dipAudioWeight * (1 - audioNorm[i])
                     return 1.0 - dipScore
                 }
 
                 // Progressive splitting: scale sensitivity by duration.
                 // Longer rallies almost certainly contain missed breaks.
-                // 15-20s: standard (0.50 / 1.5s)
-                // 20-30s: more sensitive (0.55 / 1.2s)
-                // 30s+:   aggressive (0.60 / 1.0s)
                 if segment.duration > 30 {
-                    dipThreshold = 0.60
-                    minDipDur = 1.0
+                    dipThreshold = config.dipThresholdLong
+                    minDipDur = config.dipMinDurationLong
                 } else if segment.duration > 20 {
-                    dipThreshold = 0.55
-                    minDipDur = 1.2
+                    dipThreshold = config.dipThresholdMedium
+                    minDipDur = config.dipMinDurationMedium
                 } else {
-                    dipThreshold = 0.50
-                    minDipDur = 1.5
+                    dipThreshold = config.dipThresholdStandard
+                    minDipDur = config.dipMinDurationStandard
                 }
             } else {
                 let allScores = computeCombinedScores(frames: frames, shuttlePrimary: false, config: config)

@@ -12,7 +12,7 @@ import CryptoKit
 final class SessionStore {
     static let shared = SessionStore()
 
-    private let root: URL
+    let root: URL
     private var videoIDCache: [URL: String] = [:]
     private var nextSeqCache: [String: Int] = [:]
 

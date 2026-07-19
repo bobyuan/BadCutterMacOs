@@ -488,6 +488,56 @@ struct ModelsPanel: View {
             hitModelStatusRow
             trainingPoolInfoView
             trainingActionButtons
+            if !appState.hitModelVersions.isEmpty {
+                modelVersionList
+            }
+        }
+    }
+
+    /// Registry versions with shadow-eval metrics; one-click promote/revert.
+    private var modelVersionList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Model Versions")
+                .font(.subheadline).bold()
+            ForEach(appState.hitModelVersions.reversed()) { meta in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(meta.versionLabel)
+                            .font(.caption).bold().monospacedDigit()
+                        if meta.promoted {
+                            Text("current")
+                                .font(.system(size: 9, weight: .semibold))
+                                .padding(.horizontal, 5).padding(.vertical, 1.5)
+                                .background(Capsule().fill(.green.opacity(0.18)))
+                                .foregroundStyle(.green)
+                        }
+                        Text(meta.trainedAt, format: .dateTime.month().day())
+                            .font(.caption2).foregroundStyle(.secondary)
+                        if meta.trainingAccuracy > 0 {
+                            Text(String(format: "%.0f%%", meta.trainingAccuracy * 100))
+                                .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        if let eval = meta.shadowEval, eval.sessionCount > 0 {
+                            Text(String(format: "F1 %.2f · ±%.1fs", eval.f1, eval.boundaryMAE))
+                                .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                                .help("Shadow eval over \(eval.sessionCount) corrected session(s): precision \(String(format: "%.2f", eval.precision)), recall \(String(format: "%.2f", eval.recall)), boundary MAE \(String(format: "%.2f", eval.boundaryMAE))s")
+                        }
+                        Spacer()
+                        if !meta.promoted {
+                            Button(appState.hitModelVersions.last?.id == meta.id ? "Promote" : "Revert to") {
+                                appState.promoteHitModel(version: meta.version)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                    }
+                    if let gate = meta.gateDecision, !gate.promote, !meta.promoted {
+                        Text("Held: \(gate.reason)")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
         }
     }
 

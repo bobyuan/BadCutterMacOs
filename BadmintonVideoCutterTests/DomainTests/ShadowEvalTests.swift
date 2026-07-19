@@ -1,0 +1,189 @@
+import XCTest
+@testable import BadmintonVideoCutter
+
+final class ShadowEvalTests: XCTestCase {
+
+    private func segment(_ start: Double, _ end: Double) -> TimeSegment {
+        TimeSegment(start: start, end: end, label: .rally, confidence: 1)
+    }
+
+    private func point(_ start: Double, _ end: Double, status: PointReviewStatus = .unreviewed) -> GamePoint {
+        GamePoint(pointNumber: 0, rallySegment: segment(start, end), reviewStatus: status)
+    }
+
+    // MARK: - IoU + matching
+
+    func testIoU() {
+        XCTAssertEqual(ShadowEval.iou(segment(0, 10), segment(0, 10)), 1.0, accuracy: 0.001)
+        XCTAssertEqual(ShadowEval.iou(segment(0, 10), segment(5, 15)), 5.0 / 15.0, accuracy: 0.001)
+        XCTAssertEqual(ShadowEval.iou(segment(0, 10), segment(20, 30)), 0, accuracy: 0.001)
+    }
+
+    func testEvaluateCountsMatchesAndErrors() {
+        // Truth: three active points + one deleted (deleted must be ignored).
+        let added = point(40, 48)
+        let truth = [point(0, 10), point(20, 28), added, point(60, 70, status: .deleted)]
+        // Predictions: match #1 exactly, match #2 shifted by 1s each edge,
+        // miss the added point, plus one spurious detection.
+        let predicted = [segment(0, 10), segment(21, 29), segment(100, 105)]
+
+        let result = ShadowEval.evaluate(predicted: predicted, groundTruth: truth, addedPointIDs: [added.id])
+        XCTAssertEqual(result.truePositives, 2)
+        XCTAssertEqual(result.falsePositives, 1)
+        XCTAssertEqual(result.falseNegatives, 1)   // the added point
+        XCTAssertEqual(result.addedPointsTotal, 1)
+        XCTAssertEqual(result.addedPointsFound, 0)
+        XCTAssertEqual(result.boundaryErrors.count, 2)
+        XCTAssertEqual(result.boundaryErrors.reduce(0, +), 0 + 1.0, accuracy: 0.001)
+    }
+
+    func testEvaluateMatchesEachSideOnce() {
+        // Two predictions over one truth point: only the better one matches.
+        let truth = [point(0, 10)]
+        let predicted = [segment(0, 10), segment(1, 9)]
+        let result = ShadowEval.evaluate(predicted: predicted, groundTruth: truth, addedPointIDs: [])
+        XCTAssertEqual(result.truePositives, 1)
+        XCTAssertEqual(result.falsePositives, 1)
+        XCTAssertEqual(result.boundaryErrors.first ?? -1, 0, accuracy: 0.001)
+    }
+
+    // MARK: - Aggregation
+
+    func testAggregateDerivesMetrics() {
+        var a = ShadowEval.SessionResult()
+        a.truePositives = 8; a.falsePositives = 2; a.falseNegatives = 2
+        a.boundaryErrors = [1.0, 1.0]
+        a.addedPointsTotal = 2; a.addedPointsFound = 1
+        var b = ShadowEval.SessionResult()
+        b.truePositives = 2; b.falsePositives = 0; b.falseNegatives = 0
+        b.boundaryErrors = [2.0, 4.0]
+
+        let m = ShadowEval.aggregate([a, b])
+        XCTAssertEqual(m.sessionCount, 2)
+        XCTAssertEqual(m.precision, 10.0 / 12.0, accuracy: 0.001)
+        XCTAssertEqual(m.recall, 10.0 / 12.0, accuracy: 0.001)
+        XCTAssertEqual(m.f1, 10.0 / 12.0, accuracy: 0.001)
+        XCTAssertEqual(m.boundaryMAE, 2.0, accuracy: 0.001)
+        XCTAssertEqual(m.addedPointRecall, 0.5, accuracy: 0.001)
+    }
+
+    // MARK: - Gate
+
+    private func metrics(f1TP tp: Int, fp: Int, fn: Int, addedTotal: Int = 0, addedFound: Int = 0) -> ShadowEvalMetrics {
+        var m = ShadowEvalMetrics()
+        m.truePositives = tp; m.falsePositives = fp; m.falseNegatives = fn
+        m.addedPointsTotal = addedTotal; m.addedPointsFound = addedFound
+        m.sessionCount = 1
+        return m
+    }
+
+    func testGatePromotesWithoutBaseline() {
+        let decision = ShadowEval.gate(candidate: metrics(f1TP: 5, fp: 5, fn: 5), current: nil)
+        XCTAssertTrue(decision.promote)
+    }
+
+    func testGateHoldsOnF1Regression() {
+        let current = metrics(f1TP: 10, fp: 0, fn: 0)          // F1 = 1.0
+        let candidate = metrics(f1TP: 8, fp: 2, fn: 2)          // F1 = 0.8
+        let decision = ShadowEval.gate(candidate: candidate, current: current)
+        XCTAssertFalse(decision.promote)
+        XCTAssertTrue(decision.reason.contains("F1"))
+    }
+
+    func testGateHoldsOnAddedPointRegression() {
+        let current = metrics(f1TP: 10, fp: 0, fn: 0, addedTotal: 2, addedFound: 2)
+        let candidate = metrics(f1TP: 10, fp: 0, fn: 0, addedTotal: 2, addedFound: 1)
+        let decision = ShadowEval.gate(candidate: candidate, current: current)
+        XCTAssertFalse(decision.promote)
+        XCTAssertTrue(decision.reason.contains("Added-point"))
+    }
+
+    func testGatePromotesWithinEpsilon() {
+        let current = metrics(f1TP: 100, fp: 1, fn: 1)
+        let candidate = metrics(f1TP: 99, fp: 2, fn: 2)
+        XCTAssertTrue(ShadowEval.gate(candidate: candidate, current: current).promote)
+    }
+
+    // MARK: - Model Registry
+
+    private func makeTempDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("registry_test_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        return dir
+    }
+
+    private func makeFakeModel(in dir: URL, name: String) throws -> URL {
+        let url = dir.appendingPathComponent(name)
+        try Data("model".utf8).write(to: url)
+        return url
+    }
+
+    func testRegistryAddPromoteRevert() throws {
+        let tmp = try makeTempDir()
+        let registry = ModelRegistry(modelName: "hit_classifier", rootDirectory: tmp)
+        XCTAssertNil(registry.currentVersion())
+
+        let m1 = try registry.addVersion(
+            compiledModelAt: makeFakeModel(in: tmp, name: "a.mlmodelc"),
+            clipCount: 30, trainingAccuracy: 0.9
+        )
+        XCTAssertEqual(m1.version, 1)
+        XCTAssertNil(registry.currentVersion(), "addVersion must not auto-promote")
+
+        registry.promote(version: 1)
+        XCTAssertEqual(registry.currentVersion(), 1)
+        XCTAssertNotNil(registry.currentModelURL())
+
+        let m2 = try registry.addVersion(
+            compiledModelAt: makeFakeModel(in: tmp, name: "b.mlmodelc"),
+            clipCount: 60, trainingAccuracy: 0.95
+        )
+        XCTAssertEqual(m2.version, 2)
+        registry.promote(version: 2)
+        XCTAssertEqual(registry.currentVersion(), 2)
+        XCTAssertEqual(registry.versions().map(\.promoted), [false, true])
+
+        // Revert
+        registry.promote(version: 1)
+        XCTAssertEqual(registry.currentVersion(), 1)
+        XCTAssertEqual(registry.versions().map(\.promoted), [true, false])
+    }
+
+    func testRegistryMetadataRoundTripWithEval() throws {
+        let tmp = try makeTempDir()
+        let registry = ModelRegistry(modelName: "hit_classifier", rootDirectory: tmp)
+        var meta = try registry.addVersion(
+            compiledModelAt: makeFakeModel(in: tmp, name: "a.mlmodelc"),
+            clipCount: 40, trainingAccuracy: 0.88
+        )
+        meta.shadowEval = metrics(f1TP: 9, fp: 1, fn: 1)
+        meta.gateDecision = ShadowEval.GateDecision(promote: true, reason: "test")
+        try registry.save(meta)
+
+        let loaded = try XCTUnwrap(registry.metadata(forVersion: 1))
+        // ISO8601 truncates sub-second precision — compare the date separately.
+        XCTAssertEqual(loaded.trainedAt.timeIntervalSince(meta.trainedAt), 0, accuracy: 1.0)
+        var comparable = loaded
+        comparable.trainedAt = meta.trainedAt
+        XCTAssertEqual(comparable, meta)
+        XCTAssertEqual(loaded.shadowEval?.f1 ?? 0, 0.9, accuracy: 0.001)
+    }
+
+    func testRegistryLegacyMigration() throws {
+        let tmp = try makeTempDir()
+        let legacy = try makeFakeModel(in: tmp, name: "hit_classifier.mlmodelc")
+        let registry = ModelRegistry(modelName: "hit_classifier", rootDirectory: tmp)
+
+        registry.migrateLegacyModel(at: legacy)
+        XCTAssertEqual(registry.currentVersion(), 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacy.path), "legacy file moves into the registry")
+        XCTAssertEqual(registry.versions().first?.promoted, true)
+
+        // Idempotent: running again with a new file must not clobber v001.
+        let stray = try makeFakeModel(in: tmp, name: "hit_classifier.mlmodelc")
+        registry.migrateLegacyModel(at: stray)
+        XCTAssertEqual(registry.versions().count, 1)
+    }
+}

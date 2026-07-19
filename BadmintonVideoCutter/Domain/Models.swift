@@ -119,6 +119,44 @@ struct AnalysisConfig: Codable {
     var shuttleGapThreshold: Double = 0.3
     var positionDiscontinuityThreshold: Double = 0.3
     var minGapValidationScore: Int = 2
+
+    // MARK: Shuttle-primary segmentation (was hardcoded in HybridSegmenter;
+    // defaults exactly match the previous constants — pinned by the
+    // segmentation + golden test suites)
+
+    /// Fraction of frames that must have a shuttle position to trust the ML signal.
+    var shuttlePositionRateThreshold: Double = 0.10
+    /// Otsu threshold clamp for the bimodal combined-score distribution.
+    var shuttleOtsuClampMin: Double = 0.25
+    var shuttleOtsuClampMax: Double = 0.55
+    /// Combined-score blend weights (presence / flight-motion / motion / audio).
+    var shuttleBlendPresenceWeight: Double = 0.40
+    var shuttleBlendFlightMotionWeight: Double = 0.30
+    var shuttleBlendMotionWeight: Double = 0.20
+    var shuttleBlendAudioWeight: Double = 0.10
+    /// Post-processing constants in shuttle-primary mode.
+    var shuttleMergeGap: TimeInterval = 0.5
+    var shuttleMinBreak: TimeInterval = 1.5
+    var shuttlePreRollSeconds: TimeInterval = 0.5
+    var shuttlePostRollSeconds: TimeInterval = 0.5
+    var shuttleMaxRallyDuration: TimeInterval = 15.0
+    /// Rally fragments shorter than this are absorbed into breaks.
+    var shuttleMinRallyAbsorb: TimeInterval = 3.0
+    /// Final cleanup merge gap after fragment absorption.
+    var finalMergeGap: TimeInterval = 2.0
+
+    // Dip detection inside splitLongRallies: combined-score weights and the
+    // duration-scaled sensitivity ladder (longer rallies split more eagerly).
+    var dipPresenceWeight: Double = 0.35
+    var dipFlightMotionWeight: Double = 0.30
+    var dipMotionWeight: Double = 0.20
+    var dipAudioWeight: Double = 0.15
+    var dipThresholdStandard: Double = 0.50        // 15–20s rallies
+    var dipMinDurationStandard: TimeInterval = 1.5
+    var dipThresholdMedium: Double = 0.55          // 20–30s
+    var dipMinDurationMedium: TimeInterval = 1.2
+    var dipThresholdLong: Double = 0.60            // 30s+
+    var dipMinDurationLong: TimeInterval = 1.0
 }
 
 // MARK: - Point Review & Game Structure

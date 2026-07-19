@@ -49,18 +49,20 @@ final class AppState: ObservableObject {
     // MARK: - Hit Model State
     @Published var hitModelStatus: HitModelStatus = .notTrained
     @Published var useHitModel: Bool = true
+    @Published var hitModelVersions: [ModelVersionMetadata] = []
+    let hitModelRegistry = ModelRegistry(modelName: "hit_classifier")
 
     // MARK: - Training Pool State
     @Published var trainingPoolStatus: TrainingPoolStatus = .empty
     @Published var trainingPoolManifest: TrainingDataManifest = TrainingDataManifest()
 
     var hitModelExists: Bool {
-        FileManager.default.fileExists(atPath: hitModelOutputURL.path)
+        hitModelRegistry.currentModelURL() != nil
     }
 
     var hitModelURL: URL? {
         guard useHitModel else { return nil }
-        return hitModelExists ? hitModelOutputURL : nil
+        return hitModelRegistry.currentModelURL()
     }
 
     /// URL for the TrackNetV3 shuttlecock detection CoreML model.
@@ -117,11 +119,18 @@ final class AppState: ObservableObject {
     private let exporter = VideoExporter()
 
     init() {
-        // Check if a trained model already exists
-        if FileManager.default.fileExists(atPath: hitModelOutputURL.path) {
-            hitModelStatus = .trained(accuracy: 0, clipCount: 0)
+        // Adopt a pre-registry model file as v001, then reflect registry state.
+        hitModelRegistry.migrateLegacyModel(at: hitModelOutputURL)
+        refreshHitModelVersions()
+        if let current = hitModelRegistry.currentVersion(),
+           let meta = hitModelRegistry.metadata(forVersion: current) {
+            hitModelStatus = .trained(accuracy: meta.trainingAccuracy, clipCount: meta.clipCount)
         }
         refreshTrainingPool()
+    }
+
+    func refreshHitModelVersions() {
+        hitModelVersions = hitModelRegistry.versions()
     }
 
     // MARK: - Computed Properties
@@ -1259,16 +1268,60 @@ final class AppState: ObservableObject {
 
         Task {
             do {
+                // Train to a scratch location; the registry owns the file after addVersion.
+                let candidateURL = hitModelOutputURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("candidate_hit_classifier.mlmodelc")
+                try? FileManager.default.removeItem(at: candidateURL)
+
                 let result = try await HitModelTrainer.trainFromPool(
-                    outputModelURL: hitModelOutputURL,
+                    outputModelURL: candidateURL,
                     progress: { [weak self] msg in
                         Task { @MainActor [weak self] in
                             self?.hitModelStatus = .training(progress: msg)
                         }
                     }
                 )
-                hitModelStatus = .trained(accuracy: result.accuracy, clipCount: result.clipCount)
-                statusMessage = String(format: "Model trained: %.0f%% accuracy from %d clips", result.accuracy * 100, result.clipCount)
+
+                var meta = try hitModelRegistry.addVersion(
+                    compiledModelAt: candidateURL,
+                    clipCount: result.clipCount,
+                    trainingAccuracy: result.accuracy
+                )
+
+                // Shadow eval: replay every corrected session's cached frames
+                // and score against the user's corrections (DESIGN §3.5).
+                hitModelStatus = .training(progress: "Shadow-evaluating against corrected sessions…")
+                let config = AnalysisConfig(
+                    rallyPercentile: sensitivity.rallyPercentile,
+                    motionWeight: sensitivity.motionWeight,
+                    audioWeight: sensitivity.audioWeight
+                )
+                let store = sessionStore
+                let sessionsRoot = store.root
+                let candidateMetrics = await Task.detached {
+                    ShadowEvaluator.evaluateCorpus(store: store, sessionsRoot: sessionsRoot, config: config)
+                }.value
+
+                let currentMeta = hitModelRegistry.currentVersion()
+                    .flatMap { hitModelRegistry.metadata(forVersion: $0) }
+                let decision = ShadowEval.gate(candidate: candidateMetrics, current: currentMeta?.shadowEval)
+                meta.shadowEval = candidateMetrics
+                meta.gateDecision = decision
+                try? hitModelRegistry.save(meta)
+
+                if decision.promote {
+                    hitModelRegistry.promote(version: meta.version)
+                    hitModelStatus = .trained(accuracy: result.accuracy, clipCount: result.clipCount)
+                    statusMessage = "\(meta.versionLabel) trained and promoted — \(decision.reason)"
+                } else if let currentMeta {
+                    hitModelStatus = .trained(accuracy: currentMeta.trainingAccuracy, clipCount: currentMeta.clipCount)
+                    statusMessage = "\(meta.versionLabel) trained but NOT promoted — \(decision.reason)"
+                } else {
+                    hitModelStatus = .notTrained
+                    statusMessage = "\(meta.versionLabel) trained but NOT promoted — \(decision.reason)"
+                }
+                refreshHitModelVersions()
             } catch {
                 hitModelStatus = .failed(error: error.localizedDescription)
                 lastErrorMessage = error.localizedDescription
@@ -1276,10 +1329,22 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Point the pipeline at a specific version (promote a held candidate or
+    /// revert to an older one).
+    func promoteHitModel(version: Int) {
+        hitModelRegistry.promote(version: version)
+        refreshHitModelVersions()
+        if let meta = hitModelRegistry.metadata(forVersion: version) {
+            hitModelStatus = .trained(accuracy: meta.trainingAccuracy, clipCount: meta.clipCount)
+        }
+        statusMessage = String(format: "Now using hit model v%03d. Re-analyze to apply.", version)
+    }
+
     func deleteHitModel() {
-        try? FileManager.default.removeItem(at: hitModelOutputURL)
+        hitModelRegistry.removeAll()
+        refreshHitModelVersions()
         hitModelStatus = .notTrained
-        statusMessage = "Hit detection model deleted."
+        statusMessage = "All hit model versions deleted."
     }
 
     func clearTrainingPool() {
