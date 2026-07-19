@@ -104,11 +104,20 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 - [x] `ShadowEvalTests` (12 tests: IoU, matching, aggregation, gate, registry
       round-trip/promote/revert/migration)
 
-## Phase 7 — Learned Ranker + Polish
+## Phase 7 — Learned Ranker + Polish ✅
 
-- [ ] Tabular ranker from ratings (≥30) with gated rollout
-- [ ] Score overlay on scoring reel (`AVVideoCompositionCoreAnimationTool`)
-- [ ] Crossfade transition
+- [x] Tabular ranker from ratings (≥30) with gated rollout (`HighlightRanker`:
+      pool from session ledgers, MLLinearRegressor over the shared percentile
+      features, pairwise concordance metric, highlight_ranker registry + gate;
+      promoted ranker replaces heuristic weights in `refreshHighlightScores`,
+      Models panel section w/ rating count + versions). NOTE: not yet exercised
+      with 30 real ratings — unit tests cover train/predict/concordance
+- [x] Score overlay on scoring reel (`AVVideoCompositionCoreAnimationTool`;
+      badge pre-rendered to CGImage — CATextLayer doesn't render in the export
+      pipeline; timed per-point visibility; verified in exported frames)
+- [x] Crossfade transition (A/B alternating tracks, 0.5s opacity + audio-mix
+      ramps, fade capped at half the shortest segment; verified: reel duration
+      shrank by exactly 10 fades and a boundary frame shows the blend)
 
 ## Phase 8 — ML Upgrades
 
@@ -128,3 +137,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | 2026-07-19 | **Phase 4 complete** (`19b7b76`). New `HighlightScorer.swift`: `HitDetector` (trajectory vy direction-changes + audio-onset fusion) and 6-feature percentile-weighted scoring per DESIGN §3.4. AppState recomputes on every point mutation; Points panel gains star badges, Time/Score sort, top-K slider. Golden top-3 pinned for all 5 cached videos (e.g. IMG_8510: 6.6/686.8/501.2s). All suites green. New-file pbxproj registration done (explicit refs). |
 | 2026-07-19 | **Phase 5 complete** (`3edc392`). ExportPlan/ExportOutput models, HighlightScorer.select policies, job-based VideoExporter with passthrough+fallback, rebuilt Export panel (reel toggles, selection slider, estimates, results). **Full E2E verified via UI automation on IMG_6155.rallies.mov**: import → analyze (11 pts) → chips/👍(confirmed chip)/score-sort/top-K → Add Point (added chip, renumber, rescore) → ⌘Z undo (rating survives) → dual-reel export (h264 passthrough, 65.1s + 22.0s, sizes shown). Known polish: point rows too cramped at min inspector width (chips/badges wrap). |
 | 2026-07-19 | **Phase 6 complete** (`4a8e1c7`). ModelRegistry (vNNN dirs + current pointer, legacy migration verified live in app), ShadowEval engine + promotion gate, trainFromPool now train→register→shadow-eval→gate→promote/hold, Models panel version list w/ metrics + promote/revert. 19 shuttle-primary constants lifted into AnalysisConfig, defaults pinned by test suites (all green incl. goldens). Limitation noted: shadow replay can't yet re-score audio with a candidate model (needs audio re-extraction — Phase 8). |
+| 2026-07-19 | **Phase 7 complete** (`1ffe670`). HighlightRanker (ledger-derived rating pool → MLLinearRegressor → concordance-gated registry rollout; heuristic fallback), score overlay + crossfade in a new composed VideoExporter path (A/B tracks, audio ramps). Debug win: CATextLayer renders blank inside AVVideoCompositionCoreAnimationTool — replaced with pre-rendered CGImage badge. E2E on restored session: 60.5s reel (10 fades applied), "1:0" badge at 2s, mid-blend + "2:0" at 5.45s. Ranker awaits 30 real ratings for live exercise. |
