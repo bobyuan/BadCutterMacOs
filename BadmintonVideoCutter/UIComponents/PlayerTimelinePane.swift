@@ -1,17 +1,16 @@
 import SwiftUI
 import AVKit
 
-struct TimelineTabView: View {
+/// Center pane of the Studio layout: video player, confidence graph,
+/// interactive trim timeline, minimap, and zoom controls. Shares playback and
+/// selection state with the inspector via TimelineController.
+struct PlayerTimelinePane: View {
     @ObservedObject var appState: AppState
-    @State private var viewport = TimelineViewport()
-    @State private var playheadTime: TimeInterval = 0
+    @ObservedObject var controller: TimelineController
     @State private var timeObserver: Any?
     @State private var previewBoundaryObserver: Any?
-    @State private var selectedPointID: UUID?
 
     var body: some View {
-        HSplitView {
-            // Left panel: player + timeline + minimap
             VStack(spacing: 12) {
                 // Video player with trim overlay
                 if let player = appState.player {
@@ -62,8 +61,8 @@ struct TimelineTabView: View {
                 if !appState.featureFrames.isEmpty {
                     ConfidenceGraphView(
                         featureFrames: appState.featureFrames,
-                        viewport: viewport,
-                        playheadTime: playheadTime
+                        viewport: controller.viewport,
+                        playheadTime: controller.playheadTime
                     )
                     .frame(height: 80)
                     .background(ScrollWheelHandler { deltaX in scrollViewport(deltaX: deltaX) })
@@ -73,9 +72,9 @@ struct TimelineTabView: View {
                 if !appState.segments.isEmpty {
                     TrimOverlayTimelineView(
                         appState: appState,
-                        viewport: $viewport,
-                        playheadTime: $playheadTime,
-                        selectedPointID: $selectedPointID
+                        viewport: $controller.viewport,
+                        playheadTime: $controller.playheadTime,
+                        selectedPointID: $controller.selectedPointID
                     )
                     .frame(height: 60)
                     .background(ScrollWheelHandler { deltaX in scrollViewport(deltaX: deltaX) })
@@ -85,16 +84,16 @@ struct TimelineTabView: View {
                 if !appState.segments.isEmpty {
                     MinimapView(
                         appState: appState,
-                        viewport: $viewport,
-                        playheadTime: playheadTime
+                        viewport: $controller.viewport,
+                        playheadTime: controller.playheadTime
                     )
                     .frame(height: 30)
                 }
 
                 // Horizontal scrollbar (visible when zoomed in)
-                if viewport.zoom > 1.0 {
+                if controller.viewport.zoom > 1.0 {
                     TimelineScrollbar(
-                        viewport: $viewport,
+                        viewport: $controller.viewport,
                         totalDuration: appState.videoMetadata?.duration ?? appState.segments.last?.end ?? 1
                     )
                     .frame(height: 12)
@@ -102,42 +101,27 @@ struct TimelineTabView: View {
 
                 // Zoom controls
                 HStack {
-                    Button(action: { viewport.zoomOut(around: playheadTime) }) {
+                    Button(action: { controller.viewport.zoomOut(around: controller.playheadTime) }) {
                         Image(systemName: "minus.magnifyingglass")
                     }
-                    Text(String(format: "%.1fx", viewport.zoom))
+                    Text(String(format: "%.1fx", controller.viewport.zoom))
                         .font(.caption).monospacedDigit()
-                    Button(action: { viewport.zoomIn(around: playheadTime) }) {
+                    Button(action: { controller.viewport.zoomIn(around: controller.playheadTime) }) {
                         Image(systemName: "plus.magnifyingglass")
                     }
                     Spacer()
-                    Text(formatTime(playheadTime))
+                    Text(formatTime(controller.playheadTime))
                         .font(.caption).monospacedDigit()
                 }
 
                 Spacer(minLength: 0)
             }
             .padding(16)
-            .frame(minWidth: 500)
-            .onAppear { resetViewport() }
-            .onChange(of: appState.videoMetadata?.duration) { _, _ in resetViewport() }
-
-            // Right panel: Point list
-            PointListView(
-                appState: appState,
-                selectedPointID: selectedPointID,
-                playheadTime: playheadTime
-            ) { point in
-                previewPoint(point)
-            }
-            .frame(minWidth: 280, maxWidth: 350)
             .onAppear {
-                // Trigger serve detection if games exist but scores haven't been computed yet
-                if !appState.games.isEmpty && appState.pointScores.isEmpty {
-                    appState.detectServesAndScores()
-                }
+                resetViewport()
+                controller.previewHandler = { point in previewPoint(point) }
             }
-        }
+            .onChange(of: appState.videoMetadata?.duration) { _, _ in resetViewport() }
     }
 
     // MARK: - Trim Zone Detection
@@ -145,7 +129,7 @@ struct TimelineTabView: View {
     /// True when playhead is inside a trim segment that will be removed.
     private var isInTrimZone: Bool {
         appState.trimSegments.contains { trim in
-            trim.reviewStatus != .flagged && playheadTime >= trim.start && playheadTime <= trim.end
+            trim.reviewStatus != .flagged && controller.playheadTime >= trim.start && controller.playheadTime <= trim.end
         }
     }
 
@@ -156,12 +140,13 @@ struct TimelineTabView: View {
     private var shuttlecockPositionAtPlayhead: (x: Double, y: Double)? {
         let frames = appState.featureFrames
         guard !frames.isEmpty else { return nil }
+        let playhead = controller.playheadTime
 
         // Binary search for the nearest frame
         var lo = 0, hi = frames.count - 1
         while lo < hi {
             let mid = (lo + hi) / 2
-            if frames[mid].timestamp < playheadTime {
+            if frames[mid].timestamp < playhead {
                 lo = mid + 1
             } else {
                 hi = mid
@@ -171,13 +156,13 @@ struct TimelineTabView: View {
         // Check the closest frame (lo or lo-1)
         var bestIdx = lo
         if lo > 0 {
-            let dLo = abs(frames[lo].timestamp - playheadTime)
-            let dPrev = abs(frames[lo - 1].timestamp - playheadTime)
+            let dLo = abs(frames[lo].timestamp - playhead)
+            let dPrev = abs(frames[lo - 1].timestamp - playhead)
             if dPrev < dLo { bestIdx = lo - 1 }
         }
 
         // Only show if the frame is within 0.3s of playhead (don't stale-display)
-        guard abs(frames[bestIdx].timestamp - playheadTime) < 0.3 else { return nil }
+        guard abs(frames[bestIdx].timestamp - playhead) < 0.3 else { return nil }
         return frames[bestIdx].shuttlecockPosition
     }
 
@@ -185,11 +170,11 @@ struct TimelineTabView: View {
         let totalDuration = appState.videoMetadata?.duration ?? 1
         guard totalDuration > 0 else { return }
         // Convert pixel scroll delta to time shift (scale by visible duration)
-        let timeShift = -Double(deltaX) / 500.0 * viewport.visibleDuration
-        let newStart = max(0, min(totalDuration - viewport.visibleDuration, viewport.visibleStart + timeShift))
-        let newEnd = newStart + viewport.visibleDuration
-        viewport.visibleStart = newStart
-        viewport.visibleEnd = min(totalDuration, newEnd)
+        let timeShift = -Double(deltaX) / 500.0 * controller.viewport.visibleDuration
+        let newStart = max(0, min(totalDuration - controller.viewport.visibleDuration, controller.viewport.visibleStart + timeShift))
+        let newEnd = newStart + controller.viewport.visibleDuration
+        controller.viewport.visibleStart = newStart
+        controller.viewport.visibleEnd = min(totalDuration, newEnd)
     }
 
     // MARK: - Time Observer
@@ -197,7 +182,7 @@ struct TimelineTabView: View {
     private func setupTimeObserver(_ player: AVPlayer) {
         let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
-            playheadTime = time.seconds
+            controller.playheadTime = time.seconds
         }
     }
 
@@ -215,19 +200,19 @@ struct TimelineTabView: View {
     private func previewPoint(_ point: GamePoint) {
         guard let player = appState.player else { return }
 
-        selectedPointID = point.id
+        controller.selectedPointID = point.id
 
         // Seek to point start
         let startCM = CMTime(seconds: point.start, preferredTimescale: 600)
         player.seek(to: startCM, toleranceBefore: .zero, toleranceAfter: .zero)
-        playheadTime = point.start
+        controller.playheadTime = point.start
 
         // Scroll viewport to center on the point segment
         let totalDuration = appState.videoMetadata?.duration ?? 60
         let pointCenter = (point.start + point.end) / 2
-        let halfVisible = viewport.visibleDuration / 2
-        viewport.visibleStart = max(0, min(pointCenter - halfVisible, totalDuration - viewport.visibleDuration))
-        viewport.visibleEnd = viewport.visibleStart + viewport.visibleDuration
+        let halfVisible = controller.viewport.visibleDuration / 2
+        controller.viewport.visibleStart = max(0, min(pointCenter - halfVisible, totalDuration - controller.viewport.visibleDuration))
+        controller.viewport.visibleEnd = controller.viewport.visibleStart + controller.viewport.visibleDuration
 
         // Remove any existing boundary observer
         if let obs = previewBoundaryObserver {
@@ -248,7 +233,7 @@ struct TimelineTabView: View {
 
     private func resetViewport() {
         let duration = appState.videoMetadata?.duration ?? 60
-        viewport = TimelineViewport(visibleStart: 0, visibleEnd: duration, zoom: 1.0)
+        controller.viewport = TimelineViewport(visibleStart: 0, visibleEnd: duration, zoom: 1.0)
     }
 
     private func formatTime(_ t: TimeInterval) -> String {
