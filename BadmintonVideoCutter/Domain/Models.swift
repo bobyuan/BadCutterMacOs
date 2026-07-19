@@ -129,6 +129,22 @@ enum PointReviewStatus: String, Codable, CaseIterable {
     case unreviewed
 }
 
+/// 👍/👎 highlight rating; persisted as `highlightRated` ledger events.
+enum HighlightRating: String, Codable {
+    case up
+    case down
+}
+
+/// Derived review state shown as a chip in the point list. `added` and
+/// `edited` are ledger facts, not stored on the point.
+enum ReviewChip: String {
+    case auto
+    case confirmed
+    case edited
+    case added
+    case deleted
+}
+
 struct GamePoint: Identifiable, Codable, Equatable {
     let id: UUID
     var pointNumber: Int

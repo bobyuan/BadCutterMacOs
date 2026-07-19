@@ -99,7 +99,7 @@ struct PlayerTimelinePane: View {
                     .frame(height: 12)
                 }
 
-                // Zoom controls
+                // Zoom controls + add-point
                 HStack {
                     Button(action: { controller.viewport.zoomOut(around: controller.playheadTime) }) {
                         Image(systemName: "minus.magnifyingglass")
@@ -109,7 +109,22 @@ struct PlayerTimelinePane: View {
                     Button(action: { controller.viewport.zoomIn(around: controller.playheadTime) }) {
                         Image(systemName: "plus.magnifyingglass")
                     }
+
                     Spacer()
+
+                    Button {
+                        if let id = appState.addPoint(at: controller.playheadTime) {
+                            controller.selectedPointID = id
+                        }
+                    } label: {
+                        Label("Add Point", systemImage: "plus.rectangle")
+                    }
+                    .keyboardShortcut("a", modifiers: [])
+                    .disabled(!appState.canAddPoint)
+                    .help("Add a missed point at the playhead (A)")
+
+                    Spacer()
+
                     Text(formatTime(controller.playheadTime))
                         .font(.caption).monospacedDigit()
                 }
@@ -371,8 +386,9 @@ struct TrimOverlayTimelineView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.gray.opacity(0.1))
 
-                // Rally blocks (green)
-                ForEach(appState.segments.filter { $0.label == .rally }) { seg in
+                // Rally blocks (green) — active points when games exist, so
+                // user-added points render too; raw segments otherwise
+                ForEach(rallyBlocks) { seg in
                     let x = timeToX(seg.start, width: width)
                     let w = timeToX(seg.end, width: width) - x
                     Rectangle()
@@ -476,6 +492,15 @@ struct TrimOverlayTimelineView: View {
                 seekTo(time)
             }
         }
+    }
+
+    private var rallyBlocks: [TimeSegment] {
+        if !appState.games.isEmpty {
+            return appState.games.flatMap(\.points)
+                .filter { $0.reviewStatus != .deleted }
+                .map(\.rallySegment)
+        }
+        return appState.segments.filter { $0.label == .rally }
     }
 
     private func timeToX(_ time: TimeInterval, width: CGFloat) -> CGFloat {

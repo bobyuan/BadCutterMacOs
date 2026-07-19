@@ -91,6 +91,12 @@ final class AppState: ObservableObject {
     // MARK: - Session (Corrections Ledger) State
     @Published var canUndo = false
     @Published var canRedo = false
+    /// Points inserted by the user (effective `pointAdded` corrections).
+    @Published var addedPointIDs: Set<UUID> = []
+    /// Points whose boundaries were adjusted (effective `boundaryChanged` corrections).
+    @Published var editedPointIDs: Set<UUID> = []
+    /// Latest 👍/👎 per point, derived from `highlightRated` events.
+    @Published var pointRatings: [UUID: HighlightRating] = [:]
     private var sessionBaseline: SessionBaseline?
     private var sessionEvents: [SessionEvent] = []
     private let sessionStore = SessionStore.shared
@@ -230,7 +236,7 @@ final class AppState: ObservableObject {
             calibrationImages = result.calibrationImages
             sessionBaseline = result.sessionBaseline
             sessionEvents = result.sessionEvents
-            refreshUndoState()
+            refreshSessionDerivedState()
         } else {
             segments = []
             trimSegments = []
@@ -247,7 +253,7 @@ final class AppState: ObservableObject {
             calibrationSessionID = ""
             sessionBaseline = nil
             sessionEvents = []
-            refreshUndoState()
+            refreshSessionDerivedState()
 
             // No in-memory state — try restoring a persisted session from disk.
             restoreSessionFromDisk(for: url)
@@ -271,7 +277,7 @@ final class AppState: ObservableObject {
 
         deriveTrimSegments()
         computeAllScores()
-        refreshUndoState()
+        refreshSessionDerivedState()
 
         let pointCount = games.reduce(0) { $0 + $1.activePointCount }
         analysisProgress = AnalysisProgress(
@@ -574,13 +580,93 @@ final class AppState: ObservableObject {
         guard let url = currentAssetURL else { return }
         sessionEvents.append(event)
         sessionStore.append(event, for: url)
-        refreshUndoState()
+        refreshSessionDerivedState()
     }
 
-    private func refreshUndoState() {
+    private func refreshSessionDerivedState() {
         let counts = SessionMaterializer.undoRedoCounts(from: sessionEvents)
         canUndo = counts.undoable > 0
         canRedo = counts.redoable > 0
+
+        var added: Set<UUID> = []
+        var edited: Set<UUID> = []
+        for event in SessionMaterializer.effectiveCorrections(from: sessionEvents) {
+            switch event {
+            case .pointAdded(let pointID, _, _):
+                added.insert(pointID)
+            case .boundaryChanged(let pointID, _, _, _):
+                edited.insert(pointID)
+            default:
+                break
+            }
+        }
+        addedPointIDs = added
+        editedPointIDs = edited
+
+        // Ratings are audit events, not corrections: last one per point wins,
+        // and undo/redo never touches them.
+        var ratings: [UUID: HighlightRating] = [:]
+        for event in sessionEvents {
+            if case .highlightRated(let pointID, let raw) = event {
+                if let rating = HighlightRating(rawValue: raw) {
+                    ratings[pointID] = rating
+                } else {
+                    ratings.removeValue(forKey: pointID)
+                }
+            }
+        }
+        pointRatings = ratings
+    }
+
+    /// Derived review state for the point-list chip.
+    func reviewChip(for point: GamePoint) -> ReviewChip {
+        if point.reviewStatus == .deleted { return .deleted }
+        if addedPointIDs.contains(point.id) { return .added }
+        if editedPointIDs.contains(point.id) { return .edited }
+        if point.reviewStatus == .confirmed || pointRatings[point.id] != nil { return .confirmed }
+        return .auto
+    }
+
+    /// Whether add-point is possible (an analysis baseline exists to correct).
+    var canAddPoint: Bool {
+        sessionBaseline != nil
+    }
+
+    /// Insert a user-added point at the playhead (DESIGN §3.2). Span defaults
+    /// to the surrounding break's high-audio window, else ±4s; boundaries stay
+    /// draggable afterwards. Recorded as an undoable `pointAdded` correction,
+    /// so it flows into scoring, export, and training-clip extraction like any
+    /// other active point.
+    @discardableResult
+    func addPoint(at time: TimeInterval) -> UUID? {
+        guard sessionBaseline != nil else {
+            lastErrorMessage = "Analyze the video before adding points."
+            return nil
+        }
+        let activeSegments = games.flatMap(\.points)
+            .filter { $0.reviewStatus != .deleted }
+            .map(\.rallySegment)
+        let duration = videoMetadata?.duration
+            ?? sessionBaseline?.videoDuration
+            ?? max(featureFrames.last?.timestamp ?? 0, time + 4)
+        let span = SegmentUtils.defaultAddedPointSpan(
+            playhead: time,
+            frames: featureFrames,
+            activeSegments: activeSegments,
+            videoDuration: duration
+        )
+        let pointID = UUID()
+        recordEvent(.pointAdded(pointID: pointID, start: span.start, end: span.end))
+        rematerializeFromSession()
+        statusMessage = String(format: "Added point %.1fs – %.1fs — drag the handles to adjust", span.start, span.end)
+        return pointID
+    }
+
+    /// Toggle a 👍/👎 highlight rating; tapping the active rating clears it
+    /// (recorded as rating "none").
+    func ratePoint(pointID: UUID, rating: HighlightRating) {
+        let raw = pointRatings[pointID] == rating ? "none" : rating.rawValue
+        recordEvent(.highlightRated(pointID: pointID, rating: raw))
     }
 
     /// Look up a point across all games.
@@ -629,7 +715,7 @@ final class AppState: ObservableObject {
             for: url
         )
         sessionEvents = []
-        refreshUndoState()
+        refreshSessionDerivedState()
     }
 
     // MARK: - Serve Detection & Scoring
