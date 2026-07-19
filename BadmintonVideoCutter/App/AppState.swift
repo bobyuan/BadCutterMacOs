@@ -29,6 +29,18 @@ final class AppState: ObservableObject {
     @Published var serveSides: [UUID: ServeDetector.ServeSide] = [:]
     @Published var pointScores: [UUID: ServeDetector.PointScore] = [:]
 
+    // MARK: - Highlight State
+    @Published var highlightScores: [UUID: Double] = [:]
+    @Published var highlightTopK: Int = 10
+
+    /// The top-K active points by highlight score.
+    var topHighlightIDs: Set<UUID> {
+        let ranked = games.flatMap(\.points)
+            .filter { $0.reviewStatus != .deleted }
+            .sorted { (highlightScores[$0.id] ?? 0) > (highlightScores[$1.id] ?? 0) }
+        return Set(ranked.prefix(highlightTopK).map(\.id))
+    }
+
     // MARK: - Calibration State
     @Published var calibrationFrames: [CalibrationFrame] = []
     @Published var selectedCalibrationFrameID: UUID?
@@ -237,6 +249,7 @@ final class AppState: ObservableObject {
             sessionBaseline = result.sessionBaseline
             sessionEvents = result.sessionEvents
             refreshSessionDerivedState()
+            refreshHighlightScores()
         } else {
             segments = []
             trimSegments = []
@@ -503,6 +516,7 @@ final class AppState: ObservableObject {
 
                 deriveGameStructure()
                 deriveTrimSegments()
+                refreshHighlightScores()
                 detectServesAndScores()
 
                 let rallyCount = refined.filter { $0.label == .rally }.count
@@ -680,6 +694,7 @@ final class AppState: ObservableObject {
     func commitPointBoundary(pointID: UUID, edge: BoundaryEdge, from: TimeInterval, to: TimeInterval) {
         guard abs(from - to) > 0.01 else { return }
         recordEvent(.boundaryChanged(pointID: pointID, edge: edge, from: from, to: to))
+        refreshHighlightScores()
     }
 
     func undo() {
@@ -761,6 +776,13 @@ final class AppState: ObservableObject {
         }
 
         pointScores = allScores
+        refreshHighlightScores()
+    }
+
+    /// Recompute heuristic highlight scores for the active points.
+    func refreshHighlightScores() {
+        let activePoints = games.flatMap(\.points).filter { $0.reviewStatus != .deleted }
+        highlightScores = HighlightScorer.scores(points: activePoints, frames: featureFrames)
     }
 
     // MARK: - Trim Segments
@@ -1141,6 +1163,7 @@ final class AppState: ObservableObject {
 
                 deriveGameStructure()
                 deriveTrimSegments()
+                refreshHighlightScores()
                 detectServesAndScores()
 
                 let rallyCount = refined.filter { $0.label == .rally }.count

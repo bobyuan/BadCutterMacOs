@@ -40,6 +40,8 @@
 		A5B6C7D8E9F0A1B2C3D4E5F6 /* TrajectoryAnalyzerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */; };
 		B1C2D3E4F5A6B7C8D9E0F1A2 /* TrainingPoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */; };
 		BB01AA02CC03DD04EE05FF06 /* SessionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */; };
+		BB01AA02CC03DD04EE05FF20 /* HighlightScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */; };
+		BB01AA02CC03DD04EE05FF21 /* HighlightScorerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF21 /* HighlightScorerTests.swift */; };
 		BB01AA02CC03DD04EE05FF07 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF07 /* SessionStore.swift */; };
 		BB01AA02CC03DD04EE05FF08 /* SessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */; };
 		BB01AA02CC03DD04EE05FF10 /* StudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF10 /* StudioView.swift */; };
@@ -94,6 +96,8 @@
 		E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrajectoryAnalyzerTests.swift; sourceTree = "<group>"; };
 		A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingPoolTests.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModels.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightScorer.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF21 /* HighlightScorerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightScorerTests.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF07 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStoreTests.swift; sourceTree = "<group>"; };
 		AA01BB02CC03DD04EE05FF10 /* StudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioView.swift; sourceTree = "<group>"; };
@@ -203,6 +207,7 @@
 			isa = PBXGroup;
 			children = (
 				6AE4430931B9FFC0939EFE86 /* BasicFeatureExtractorTests.swift */,
+				AA01BB02CC03DD04EE05FF21 /* HighlightScorerTests.swift */,
 				F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */,
 				C7A8B9D0E1F2A3B4C5D6E7F8 /* ShuttlecockDetectorTests.swift */,
 				E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */,
@@ -234,6 +239,7 @@
 				E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */,
 				130FCCF3CFD4028AA5743646 /* FeatureExtractorStub.swift */,
 				ECA70BA0C88B15F75F25CB68 /* GameDetector.swift */,
+				AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */,
 				9BC836680D0DE302C08726D8 /* HitClassifier.swift */,
 				A6304677A7DE242E484CC7FA /* HitModelTrainer.swift */,
 				F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */,
@@ -338,6 +344,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DA23C2E564F4042D81AF775B /* BasicFeatureExtractorTests.swift in Sources */,
+				BB01AA02CC03DD04EE05FF21 /* HighlightScorerTests.swift in Sources */,
 				21BB9C29BC55D238F9AFDE6D /* HybridSegmenterTests.swift in Sources */,
 				94C4A7DEAC0442730297BB4C /* SegmentUtilsTests.swift in Sources */,
 				BB01AA02CC03DD04EE05FF08 /* SessionStoreTests.swift in Sources */,
@@ -363,6 +370,7 @@
 				057C041BB97EB0EC320A1F6C /* ContentView.swift in Sources */,
 				9E09384924A0D1CF7334B335 /* FeatureExtractorStub.swift in Sources */,
 				BF30AA0612CF606C78F2567C /* GameDetector.swift in Sources */,
+				BB01AA02CC03DD04EE05FF20 /* HighlightScorer.swift in Sources */,
 				4DF170D04C5FF1F54531E461 /* HitClassifier.swift in Sources */,
 				5CC3249F1F265E88D6A1744B /* HitModelTrainer.swift in Sources */,
 				ED06773894EB74D348455AF8 /* HybridSegmenter.swift in Sources */,
