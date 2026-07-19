@@ -68,8 +68,51 @@ struct PointListView: View {
                         }
                     }
                 }
+
+                saveForTrainingButton
             }
         }
+    }
+
+    // MARK: - Save for Training
+
+    @ViewBuilder
+    private var saveForTrainingButton: some View {
+        let isSaving: Bool = {
+            if case .saving = appState.trainingPoolStatus { return true }
+            return false
+        }()
+
+        VStack(spacing: 6) {
+            if isSaving, case .saving(let progress) = appState.trainingPoolStatus {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(progress)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Button(action: { appState.saveTrainingClips() }) {
+                HStack {
+                    Image(systemName: "square.and.arrow.down.on.square")
+                    Text(appState.currentVideoInPool ? "Re-save for Training" : "Save for Training")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(appState.games.isEmpty || isSaving)
+
+            if appState.currentVideoInPool {
+                Text("This video is already in the training pool")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 12)
     }
 
     private func formatDuration(_ d: TimeInterval) -> String {

@@ -31,25 +31,66 @@ final class HitModelTrainer {
         }
     }
 
-    /// Train a sound classifier from corrected game data.
-    /// `featureFrames` provides per-frame audio scores from the heuristic analysis,
-    /// used to select only the high-activity portions within each rally for "rally" clips.
-    static func train(
+    // MARK: - Storage Paths
+
+    private static var trainingDataDir: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport
+            .appendingPathComponent("BadmintonVideoCutter")
+            .appendingPathComponent("training_data")
+    }
+
+    private static var rallyDir: URL { trainingDataDir.appendingPathComponent("rally") }
+    private static var backgroundDir: URL { trainingDataDir.appendingPathComponent("background") }
+    private static var manifestURL: URL { trainingDataDir.appendingPathComponent("manifest.json") }
+
+    // MARK: - Manifest Operations
+
+    static func loadManifest() -> TrainingDataManifest {
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder.manifestDecoder.decode(TrainingDataManifest.self, from: data) else {
+            return TrainingDataManifest()
+        }
+        return manifest
+    }
+
+    private static func saveManifest(_ manifest: TrainingDataManifest) {
+        var m = manifest
+        m.lastModified = Date()
+        if let data = try? JSONEncoder.manifestEncoder.encode(m) {
+            try? data.write(to: manifestURL)
+        }
+    }
+
+    // MARK: - Save Training Clips (per-video)
+
+    static func saveTrainingClips(
         videoURL: URL,
         games: [Game],
         featureFrames: [FeatureFrame],
-        outputModelURL: URL,
         progress: @escaping (String) -> Void
-    ) async throws -> TrainingResult {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("hit_trainer_\(UUID().uuidString)")
-        let rallyDir = tempDir.appendingPathComponent("rally")
-        let backgroundDir = tempDir.appendingPathComponent("background")
+    ) async throws -> TrainingVideoEntry {
+        let fm = FileManager.default
 
-        try FileManager.default.createDirectory(at: rallyDir, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: backgroundDir, withIntermediateDirectories: true)
+        // Create directories
+        try fm.createDirectory(at: rallyDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: backgroundDir, withIntermediateDirectories: true)
 
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let videoBaseName = videoURL.deletingPathExtension().lastPathComponent
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withYear, .withMonth, .withDay, .withTime]
+        let timestamp = formatter.string(from: Date())
+            .replacingOccurrences(of: ":", with: "")
+            .replacingOccurrences(of: "-", with: "")
+        let clipPrefix = "\(videoBaseName)_\(timestamp)"
+
+        // Remove old clips from this video if re-saving
+        var manifest = loadManifest()
+        if let existingIdx = manifest.videos.firstIndex(where: { $0.videoFileName == videoBaseName }) {
+            let oldPrefix = manifest.videos[existingIdx].clipPrefix
+            removeClipsWithPrefix(oldPrefix)
+            manifest.videos.remove(at: existingIdx)
+        }
 
         progress("Reading audio...")
         let pcmData = try await readFullPCMAudio(from: videoURL)
@@ -57,48 +98,89 @@ final class HitModelTrainer {
             throw TrainerError.noAudioTrack
         }
 
-        // Build a lookup of audio activity scores by time
         let activityScores = buildActivityLookup(from: featureFrames)
 
         progress("Extracting rally clips...")
         let rallyClipCount = try extractRallyClips(
-            from: pcmData, games: games, activityScores: activityScores, outputDir: rallyDir
+            from: pcmData, games: games, activityScores: activityScores,
+            outputDir: rallyDir, filenamePrefix: clipPrefix
         )
 
         progress("Extracting background clips...")
         let bgClipCount = try extractBackgroundClips(
-            from: pcmData, games: games, activityScores: activityScores, outputDir: backgroundDir
+            from: pcmData, games: games, activityScores: activityScores,
+            outputDir: backgroundDir, filenamePrefix: clipPrefix
         )
 
+        let entry = TrainingVideoEntry(
+            videoFileName: videoBaseName,
+            addedDate: Date(),
+            rallyClipCount: rallyClipCount,
+            backgroundClipCount: bgClipCount,
+            clipPrefix: clipPrefix
+        )
+
+        manifest.videos.append(entry)
+        saveManifest(manifest)
+
+        progress("Saved \(rallyClipCount) rally + \(bgClipCount) background clips")
+        return entry
+    }
+
+    // MARK: - Train From Pool
+
+    static func trainFromPool(
+        outputModelURL: URL,
+        progress: @escaping (String) -> Void
+    ) async throws -> TrainingResult {
+        let manifest = loadManifest()
+        let totalRally = manifest.totalRallyClips
+        let totalBg = manifest.totalBackgroundClips
+
         let minClips = 15
-        guard rallyClipCount >= minClips, bgClipCount >= minClips else {
-            throw TrainerError.insufficientData(rally: rallyClipCount, background: bgClipCount)
+        guard totalRally >= minClips, totalBg >= minClips else {
+            throw TrainerError.insufficientData(rally: totalRally, background: totalBg)
         }
 
-        progress("Training model (\(rallyClipCount + bgClipCount) clips)...")
+        progress("Training model (\(totalRally + totalBg) clips from \(manifest.videos.count) video(s))...")
 
         let result = try await trainModel(
-            dataDir: tempDir,
+            dataDir: trainingDataDir,
             outputURL: outputModelURL,
-            totalClips: rallyClipCount + bgClipCount,
+            totalClips: totalRally + totalBg,
             progress: progress
         )
 
         return result
     }
 
+    // MARK: - Clear Training Pool
+
+    static func clearTrainingPool() {
+        try? FileManager.default.removeItem(at: trainingDataDir)
+    }
+
+    // MARK: - Remove Clips by Prefix
+
+    private static func removeClipsWithPrefix(_ prefix: String) {
+        let fm = FileManager.default
+        for dir in [rallyDir, backgroundDir] {
+            guard let files = try? fm.contentsOfDirectory(atPath: dir.path) else { continue }
+            for file in files where file.hasPrefix(prefix) {
+                try? fm.removeItem(at: dir.appendingPathComponent(file))
+            }
+        }
+    }
+
     // MARK: - Activity Lookup
 
-    /// Build a sorted array of (timestamp, audioScore) for binary-search lookup.
     private static func buildActivityLookup(from frames: [FeatureFrame]) -> [(time: TimeInterval, score: Double)] {
         return frames.map { (time: $0.timestamp, score: $0.audioScore) }
     }
 
-    /// Get the average audio activity score for a 1-second window starting at `time`.
     private static func activityScore(at time: TimeInterval, duration: TimeInterval = 1.0, in scores: [(time: TimeInterval, score: Double)]) -> Double {
         guard !scores.isEmpty else { return 0 }
         let end = time + duration
-        // Find frames within this window
         let relevant = scores.filter { $0.time >= time && $0.time < end }
         guard !relevant.isEmpty else { return 0 }
         return relevant.map(\.score).reduce(0, +) / Double(relevant.count)
@@ -106,13 +188,12 @@ final class HitModelTrainer {
 
     // MARK: - Clip Extraction
 
-    /// Extract "rally" clips only from high-activity portions within each rally segment.
-    /// Uses the heuristic audio scores to avoid picking up bird-fetching / walking sections.
     private static func extractRallyClips(
         from pcm: PCMAudio,
         games: [Game],
         activityScores: [(time: TimeInterval, score: Double)],
-        outputDir: URL
+        outputDir: URL,
+        filenamePrefix: String
     ) throws -> Int {
         let activePoints = games.flatMap(\.points).filter { $0.reviewStatus != .deleted }
         var clipIndex = 0
@@ -122,29 +203,25 @@ final class HitModelTrainer {
             let end = point.end - 0.5
             guard end - start >= 1.0 else { continue }
 
-            // Compute per-second activity scores within this rally
             var windowScores: [(time: TimeInterval, score: Double)] = []
             var t = start
             while t + 1.0 <= end {
                 let score = activityScore(at: t, in: activityScores)
                 windowScores.append((time: t, score: score))
-                t += 0.5  // evaluate every 0.5s for finer granularity
+                t += 0.5
             }
 
-            // Find threshold: use median score within this rally.
-            // Only clips above median qualify as "rally" training data.
             let sorted = windowScores.map(\.score).sorted()
             let median = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
-            let threshold = max(median, 0.1)  // at least 0.1 to avoid totally silent clips
+            let threshold = max(median, 0.1)
 
-            // Extract 1-second clips at 1-second intervals, only where activity is above threshold
             t = start
             while t + 1.0 <= end {
                 let score = activityScore(at: t, in: activityScores)
                 if score >= threshold {
                     let clip = extractClip(from: pcm, start: t, duration: 1.0)
                     if !clip.isEmpty {
-                        let url = outputDir.appendingPathComponent("clip_\(clipIndex).wav")
+                        let url = outputDir.appendingPathComponent("\(filenamePrefix)_\(String(format: "%03d", clipIndex)).wav")
                         writeWAV(samples: clip, sampleRate: Int(pcm.sampleRate), to: url)
                         clipIndex += 1
                     }
@@ -156,13 +233,12 @@ final class HitModelTrainer {
         return clipIndex
     }
 
-    /// Extract "background" clips from gaps between points AND from the low-activity
-    /// tails within rally segments (the bird-picking / walking portions).
     private static func extractBackgroundClips(
         from pcm: PCMAudio,
         games: [Game],
         activityScores: [(time: TimeInterval, score: Double)],
-        outputDir: URL
+        outputDir: URL,
+        filenamePrefix: String
     ) throws -> Int {
         let activePoints = games.flatMap(\.points)
             .filter { $0.reviewStatus != .deleted }
@@ -170,7 +246,6 @@ final class HitModelTrainer {
 
         var clipIndex = 0
 
-        // Source 1: Gaps between rally segments
         var gaps: [(start: TimeInterval, end: TimeInterval)] = []
 
         if activePoints.count > 1 {
@@ -197,7 +272,7 @@ final class HitModelTrainer {
             while t + 1.0 <= gap.end {
                 let clip = extractClip(from: pcm, start: t, duration: 1.0)
                 if !clip.isEmpty {
-                    let url = outputDir.appendingPathComponent("clip_\(clipIndex).wav")
+                    let url = outputDir.appendingPathComponent("\(filenamePrefix)_\(String(format: "%03d", clipIndex)).wav")
                     writeWAV(samples: clip, sampleRate: Int(pcm.sampleRate), to: url)
                     clipIndex += 1
                 }
@@ -205,7 +280,6 @@ final class HitModelTrainer {
             }
         }
 
-        // Source 2: Low-activity tails within rally segments (bird-picking, walking)
         for point in activePoints {
             let start = point.start + 0.5
             let end = point.end - 0.5
@@ -221,7 +295,6 @@ final class HitModelTrainer {
                 return scores.sorted()
             }()
             let median = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
-            // Low-activity threshold: well below the median
             let lowThreshold = median * 0.4
 
             var t = start
@@ -230,7 +303,7 @@ final class HitModelTrainer {
                 if score <= lowThreshold {
                     let clip = extractClip(from: pcm, start: t, duration: 1.0)
                     if !clip.isEmpty {
-                        let url = outputDir.appendingPathComponent("clip_\(clipIndex).wav")
+                        let url = outputDir.appendingPathComponent("\(filenamePrefix)_\(String(format: "%03d", clipIndex)).wav")
                         writeWAV(samples: clip, sampleRate: Int(pcm.sampleRate), to: url)
                         clipIndex += 1
                     }
@@ -277,11 +350,9 @@ final class HitModelTrainer {
             let accuracy = Double(classifier.trainingMetrics.classificationError)
             let modelAccuracy = max(0, 1.0 - accuracy)
 
-            // Ensure parent directory exists
             let parentDir = outputURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
 
-            // Write to a temp .mlmodel file, then compile to .mlmodelc
             let tempModelURL = parentDir.appendingPathComponent("hit_classifier_temp.mlmodel")
             defer { try? FileManager.default.removeItem(at: tempModelURL) }
 
@@ -291,7 +362,6 @@ final class HitModelTrainer {
                 throw TrainerError.exportFailed(error.localizedDescription)
             }
 
-            // Compile .mlmodel → .mlmodelc
             let compiledURL: URL
             do {
                 compiledURL = try MLModel.compileModel(at: tempModelURL)
@@ -299,7 +369,6 @@ final class HitModelTrainer {
                 throw TrainerError.exportFailed("Model compilation failed: \(error.localizedDescription)")
             }
 
-            // Move compiled model to final location
             if FileManager.default.fileExists(atPath: outputURL.path) {
                 try? FileManager.default.removeItem(at: outputURL)
             }
@@ -365,7 +434,6 @@ final class HitModelTrainer {
     // MARK: - WAV Writing
 
     private static func writeWAV(samples: [Float], sampleRate: Int, to url: URL) {
-        // Convert Float32 to Int16 for WAV
         let int16Samples = samples.map { sample -> Int16 in
             let clamped = max(-1.0, min(1.0, sample))
             return Int16(clamped * Float(Int16.max))
