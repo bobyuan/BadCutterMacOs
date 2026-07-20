@@ -5,6 +5,7 @@ struct PointListView: View {
     var selectedPointID: UUID?
     var playheadTime: TimeInterval = 0
     var onSelectPoint: ((GamePoint) -> Void)?
+    var onFeedback: ((GamePoint, PointFeedbackReason) -> Void)?
 
     @State private var sortByScore = false
 
@@ -99,6 +100,9 @@ struct PointListView: View {
                                     onRate: { rating in
                                         appState.ratePoint(pointID: point.id, rating: rating)
                                     },
+                                    onFeedback: { reason in
+                                        onFeedback?(point, reason)
+                                    },
                                     onTap: {
                                         onSelectPoint?(point)
                                     }
@@ -148,6 +152,9 @@ struct PointListView: View {
                     },
                     onRate: { rating in
                         appState.ratePoint(pointID: entry.point.id, rating: rating)
+                    },
+                    onFeedback: { reason in
+                        onFeedback?(entry.point, reason)
                     },
                     onTap: {
                         onSelectPoint?(entry.point)
@@ -219,6 +226,7 @@ struct PointRow: View {
     var gameNumber: Int?
     let onToggleDelete: () -> Void
     var onRate: ((HighlightRating) -> Void)?
+    var onFeedback: ((PointFeedbackReason) -> Void)?
     let onTap: () -> Void
 
     private var progress: Double {
@@ -276,13 +284,25 @@ struct PointRow: View {
                     .buttonStyle(.borderless)
                     .help("Rate as highlight")
 
-                    Button { onRate(.down) } label: {
+                    // 👎 with a reason: taste feeds the ranker; detection
+                    // complaints trigger an automatic fix + tune UI.
+                    Menu {
+                        Button(rating == .down ? "Clear 👎 rating" : PointFeedbackReason.notHighlight.label) {
+                            onRate(.down)
+                        }
+                        Divider()
+                        ForEach(PointFeedbackReason.allCases.filter { $0 != .notHighlight }) { reason in
+                            Button(reason.label) { onFeedback?(reason) }
+                        }
+                    } label: {
                         Image(systemName: rating == .down ? "hand.thumbsdown.fill" : "hand.thumbsdown")
                             .font(.caption2)
                             .foregroundStyle(rating == .down ? Color.red : Color.secondary)
                     }
-                    .buttonStyle(.borderless)
-                    .help("Rate as not a highlight")
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("What's wrong with this point?")
                 }
 
                 Button(action: onToggleDelete) {

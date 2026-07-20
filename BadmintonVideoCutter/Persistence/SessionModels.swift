@@ -17,6 +17,10 @@ enum SessionEvent: Codable, Equatable {
     case pointAdded(pointID: UUID, start: TimeInterval, end: TimeInterval)
     case boundaryChanged(pointID: UUID, edge: BoundaryEdge, from: TimeInterval, to: TimeInterval)
     case highlightRated(pointID: UUID, rating: String)
+    /// A 👎 reason (detection complaint). Audit-only: the resulting fix is
+    /// recorded as ordinary correction events; the reason label itself is
+    /// tuning signal (e.g. recurring "startsTooEarly" → pre-roll too big).
+    case pointFeedback(pointID: UUID, reason: String)
     case savedToPool(rallyClips: Int, backgroundClips: Int)
     case exported(output: String)
     case undo

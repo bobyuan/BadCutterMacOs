@@ -46,10 +46,27 @@ struct InspectorPane: View {
         PointListView(
             appState: appState,
             selectedPointID: controller.selectedPointID,
-            playheadTime: controller.playheadTime
-        ) { point in
-            controller.preview(point)
-        }
+            playheadTime: controller.playheadTime,
+            onSelectPoint: { point in
+                controller.preview(point)
+            },
+            onFeedback: { point, reason in
+                guard let outcome = appState.applyFeedback(pointID: point.id, reason: reason) else { return }
+                if let focusID = outcome.focusPointID, let focusPoint = appState.point(withID: focusID) {
+                    let duration = appState.videoMetadata?.duration
+                        ?? appState.segments.last?.end
+                        ?? focusPoint.end + 10
+                    controller.beginTuning(
+                        point: focusPoint,
+                        ghostStart: outcome.ghostStart,
+                        ghostEnd: outcome.ghostEnd,
+                        videoDuration: duration
+                    )
+                } else {
+                    controller.endTuning()
+                }
+            }
+        )
         .onAppear {
             // Trigger serve detection if games exist but scores haven't been computed yet
             if !appState.games.isEmpty && appState.pointScores.isEmpty {

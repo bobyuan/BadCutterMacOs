@@ -192,6 +192,101 @@ final class HighlightScorerTests: XCTestCase {
         }
     }
 
+    // MARK: - PointAdjuster (feedback-driven fixes)
+
+    /// Frames every 0.2s across [0, 60]; `activeRanges` get motion 0.3 +
+    /// shuttle positions, the rest sit at motion 0.03.
+    private func adjusterFrames(activeRanges: [ClosedRange<TimeInterval>]) -> [FeatureFrame] {
+        stride(from: 0.0, through: 60.0, by: 0.2).map { t in
+            let active = activeRanges.contains { $0.contains(t) }
+            var f = FeatureFrame(timestamp: t, motionScore: active ? 0.3 : 0.03, audioScore: 0)
+            if active { f.shuttlecockPosition = (x: 0.5, y: 0.5) }
+            return f
+        }
+    }
+
+    private func adjusterContext(
+        point: GamePoint,
+        activeRanges: [ClosedRange<TimeInterval>],
+        onsets: [TimeInterval] = [],
+        previousEnd: TimeInterval = 0,
+        nextStart: TimeInterval = 60
+    ) -> PointAdjuster.Context {
+        PointAdjuster.Context(
+            point: point,
+            previousEnd: previousEnd,
+            nextStart: nextStart,
+            frames: adjusterFrames(activeRanges: activeRanges),
+            onsets: onsets,
+            videoDuration: 60
+        )
+    }
+
+    private func adjusterPoint(_ start: TimeInterval, _ end: TimeInterval) -> GamePoint {
+        GamePoint(pointNumber: 1, rallySegment: TimeSegment(start: start, end: end, label: .rally, confidence: 1))
+    }
+
+    func testAdjusterStartsTooEarlyAnchorsOnFirstEvidence() throws {
+        // Point [10, 20], but play only starts at 14 (onset + shuttle).
+        let ctx = adjusterContext(point: adjusterPoint(10, 20), activeRanges: [14...20], onsets: [14.1, 15, 16])
+        let proposal = try XCTUnwrap(PointAdjuster.propose(reason: .startsTooEarly, context: ctx))
+        guard case .adjustStart(let to) = proposal else { return XCTFail("\(proposal)") }
+        XCTAssertEqual(to, 13.5, accuracy: 0.4)   // ~0.7s before first evidence
+    }
+
+    func testAdjusterEndsTooLateAnchorsOnLastEvidence() throws {
+        // Point [10, 25], play stops at 18.
+        let ctx = adjusterContext(point: adjusterPoint(10, 25), activeRanges: [10...18], onsets: [12, 17.8])
+        let proposal = try XCTUnwrap(PointAdjuster.propose(reason: .endsTooLate, context: ctx))
+        guard case .adjustEnd(let to) = proposal else { return XCTFail("\(proposal)") }
+        XCTAssertEqual(to, 19.0, accuracy: 0.4)   // ~1s after last evidence
+    }
+
+    func testAdjusterEndsTooEarlyExtendsWhileActive() throws {
+        // Point [10, 15] but activity continues to 19; next point at 30.
+        let ctx = adjusterContext(point: adjusterPoint(10, 15), activeRanges: [10...19], nextStart: 30)
+        let proposal = try XCTUnwrap(PointAdjuster.propose(reason: .endsTooEarly, context: ctx))
+        guard case .adjustEnd(let to) = proposal else { return XCTFail("\(proposal)") }
+        XCTAssertGreaterThan(to, 18.5)
+        XCTAssertLessThan(to, 21.0)
+    }
+
+    func testAdjusterStartsTooLateExtendsBackWhileActive() throws {
+        // Point [15, 25] but the rally has been running since 11.
+        let ctx = adjusterContext(point: adjusterPoint(15, 25), activeRanges: [11...25], previousEnd: 5)
+        let proposal = try XCTUnwrap(PointAdjuster.propose(reason: .startsTooLate, context: ctx))
+        guard case .adjustStart(let to) = proposal else { return XCTFail("\(proposal)") }
+        XCTAssertLessThan(to, 12.0)
+        XCTAssertGreaterThanOrEqual(to, 5.1)
+    }
+
+    func testAdjusterSplitFindsInternalDip() throws {
+        // Point [10, 30] with a dead zone 18–23 in the middle.
+        let ctx = adjusterContext(point: adjusterPoint(10, 30), activeRanges: [10...18, 23...30])
+        let proposal = try XCTUnwrap(PointAdjuster.propose(reason: .shouldSplit, context: ctx))
+        guard case .split(let firstEnd, let secondStart) = proposal else { return XCTFail("\(proposal)") }
+        XCTAssertEqual(firstEnd, 19.0, accuracy: 1.0)
+        XCTAssertEqual(secondStart, 22.5, accuracy: 1.0)
+        XCTAssertLessThan(firstEnd, secondStart)
+    }
+
+    func testAdjusterMissedPointBeforeFindsActivityInGap() throws {
+        // Gap [0, 30] before point [30, 40]; a missed rally lives at 12–18.
+        let ctx = adjusterContext(point: adjusterPoint(30, 40), activeRanges: [12...18, 30...40], previousEnd: 0)
+        let proposal = try XCTUnwrap(PointAdjuster.propose(reason: .missedPointBefore, context: ctx))
+        guard case .insertBefore(let start, let end) = proposal else { return XCTFail("\(proposal)") }
+        XCTAssertGreaterThan(end, start)
+        // Span must overlap the actual missed rally.
+        XCTAssertLessThan(start, 18)
+        XCTAssertGreaterThan(end, 12)
+    }
+
+    func testAdjusterQuietGapProposesNothing() {
+        // No activity in the gap → refuse rather than invent a point.
+        let ctx = adjusterContext(point: adjusterPoint(30, 40), activeRanges: [30...40], previousEnd: 0)
+        XCTAssertNil(PointAdjuster.propose(reason: .missedPointBefore, context: ctx))
+    }
+
     // MARK: - vDSP onset detection (Phase 8)
 
     /// 5s of near-silence with sharp bursts at 1, 2, 3 and 4 seconds.

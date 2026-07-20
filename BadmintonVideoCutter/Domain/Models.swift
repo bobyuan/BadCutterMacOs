@@ -174,6 +174,36 @@ enum HighlightRating: String, Codable {
     case down
 }
 
+/// Why the user flagged a point (👎 menu). `notHighlight` is pure taste and
+/// feeds the ranker's rating pool; every other reason is a *detection*
+/// complaint that triggers an automatic boundary fix and stays out of the
+/// taste pool (see D-008).
+enum PointFeedbackReason: String, Codable, CaseIterable, Identifiable {
+    case notHighlight
+    case missedPointBefore
+    case startsTooEarly
+    case startsTooLate
+    case endsTooEarly
+    case endsTooLate
+    case shouldSplit
+    case notAPoint
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .notHighlight: return "Not highlight-worthy"
+        case .missedPointBefore: return "Missed a point before this one"
+        case .startsTooEarly: return "Starts too early (dead time before serve)"
+        case .startsTooLate: return "Starts too late (play already going)"
+        case .endsTooEarly: return "Ends too early (still active)"
+        case .endsTooLate: return "Ends too late (dead time after rally)"
+        case .shouldSplit: return "Two points merged — split it"
+        case .notAPoint: return "Not a point at all"
+        }
+    }
+}
+
 /// Derived review state shown as a chip in the point list. `added` and
 /// `edited` are ledger facts, not stored on the point.
 enum ReviewChip: String {

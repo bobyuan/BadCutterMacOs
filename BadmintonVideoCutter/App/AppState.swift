@@ -819,6 +819,131 @@ final class AppState: ObservableObject {
         recordEvent(.highlightRated(pointID: pointID, rating: raw))
     }
 
+    // MARK: - Feedback-Driven Adjustment
+
+    struct FeedbackOutcome {
+        /// Point the tune UI should focus (nil when the point was deleted).
+        var focusPointID: UUID?
+        /// Pre-adjustment boundaries, for ghost display.
+        var ghostStart: TimeInterval?
+        var ghostEnd: TimeInterval?
+        var autoAdjusted: Bool
+    }
+
+    /// Handle a 👎 reason: record it, apply the automatic fix through the
+    /// ordinary ledger paths (always undoable), and tell the caller where to
+    /// focus the tune UI. `notHighlight` never reaches here — the menu records
+    /// a plain rating for it, keeping the ranker's taste pool clean (D-008).
+    @discardableResult
+    func applyFeedback(pointID: UUID, reason: PointFeedbackReason) -> FeedbackOutcome? {
+        guard let point = point(withID: pointID) else { return nil }
+        recordEvent(.pointFeedback(pointID: pointID, reason: reason.rawValue))
+
+        if reason == .notHighlight {
+            if pointRatings[pointID] != .down {
+                recordEvent(.highlightRated(pointID: pointID, rating: HighlightRating.down.rawValue))
+            }
+            return FeedbackOutcome(focusPointID: nil, ghostStart: nil, ghostEnd: nil, autoAdjusted: false)
+        }
+        if reason == .notAPoint {
+            setPointReviewStatus(pointID: pointID, status: .deleted)
+            statusMessage = "Point #\(point.pointNumber) deleted — labeled false positive (great training signal)."
+            return FeedbackOutcome(focusPointID: nil, ghostStart: nil, ghostEnd: nil, autoAdjusted: true)
+        }
+
+        guard let proposal = PointAdjuster.propose(reason: reason, context: adjusterContext(for: point)) else {
+            statusMessage = "No confident automatic fix — adjust with the tune bar below the player."
+            return FeedbackOutcome(focusPointID: pointID, ghostStart: nil, ghostEnd: nil, autoAdjusted: false)
+        }
+
+        switch proposal {
+        case .adjustStart(let to):
+            let from = point.start
+            updatePointBoundary(pointID: pointID, newStart: to)
+            commitPointBoundary(pointID: pointID, edge: .start, from: from, to: to)
+            deriveTrimSegments()
+            computeAllScores()
+            statusMessage = String(format: "Start moved %+.1fs (%@). Fine-tune below or ⌘Z to undo.", to - from, reason.label)
+            return FeedbackOutcome(focusPointID: pointID, ghostStart: from, ghostEnd: nil, autoAdjusted: true)
+
+        case .adjustEnd(let to):
+            let from = point.end
+            updatePointBoundary(pointID: pointID, newEnd: to)
+            commitPointBoundary(pointID: pointID, edge: .end, from: from, to: to)
+            deriveTrimSegments()
+            computeAllScores()
+            statusMessage = String(format: "End moved %+.1fs (%@). Fine-tune below or ⌘Z to undo.", to - from, reason.label)
+            return FeedbackOutcome(focusPointID: pointID, ghostStart: nil, ghostEnd: from, autoAdjusted: true)
+
+        case .split(let firstEnd, let secondStart):
+            let originalEnd = point.end
+            updatePointBoundary(pointID: pointID, newEnd: firstEnd)
+            commitPointBoundary(pointID: pointID, edge: .end, from: originalEnd, to: firstEnd)
+            let newID = UUID()
+            recordEvent(.pointAdded(pointID: newID, start: secondStart, end: originalEnd))
+            rematerializeFromSession()
+            statusMessage = String(format: "Split at %@ into two points. ⌘Z twice to undo.", Self.formatTimestamp(firstEnd))
+            return FeedbackOutcome(focusPointID: newID, ghostStart: nil, ghostEnd: originalEnd, autoAdjusted: true)
+
+        case .insertBefore(let start, let end):
+            let newID = UUID()
+            recordEvent(.pointAdded(pointID: newID, start: start, end: end))
+            rematerializeFromSession()
+            statusMessage = String(format: "Added missed point %@ – %@ — drag or tune to adjust.",
+                                   Self.formatTimestamp(start), Self.formatTimestamp(end))
+            return FeedbackOutcome(focusPointID: newID, ghostStart: nil, ghostEnd: nil, autoAdjusted: true)
+        }
+    }
+
+    private func adjusterContext(for point: GamePoint) -> PointAdjuster.Context {
+        let active = activePoints
+        let previousEnd = active.last(where: { $0.end <= point.start + 0.01 && $0.id != point.id })?.end ?? 0
+        let duration = videoMetadata?.duration
+            ?? sessionBaseline?.videoDuration
+            ?? (featureFrames.last?.timestamp ?? point.end + 5)
+        let nextStart = active.first(where: { $0.start >= point.end - 0.01 && $0.id != point.id })?.start ?? duration
+        return PointAdjuster.Context(
+            point: point,
+            previousEnd: previousEnd,
+            nextStart: nextStart,
+            frames: featureFrames,
+            onsets: audioSignals.onsets,
+            videoDuration: duration
+        )
+    }
+
+    /// Nudge one boundary by a delta (tune-bar buttons). Ledger-recorded.
+    func nudgeBoundary(pointID: UUID, edge: BoundaryEdge, delta: TimeInterval) {
+        guard let target = point(withID: pointID) else { return }
+        switch edge {
+        case .start:
+            let from = target.start
+            updatePointBoundary(pointID: pointID, newStart: from + delta)
+            if let moved = point(withID: pointID)?.start {
+                commitPointBoundary(pointID: pointID, edge: .start, from: from, to: moved)
+            }
+        case .end:
+            let from = target.end
+            updatePointBoundary(pointID: pointID, newEnd: from + delta)
+            if let moved = point(withID: pointID)?.end {
+                commitPointBoundary(pointID: pointID, edge: .end, from: from, to: moved)
+            }
+        }
+        deriveTrimSegments()
+        computeAllScores()
+    }
+
+    /// Set one boundary to an absolute time (tune-bar "set = playhead").
+    func setBoundary(pointID: UUID, edge: BoundaryEdge, to time: TimeInterval) {
+        guard let target = point(withID: pointID) else { return }
+        let from = edge == .start ? target.start : target.end
+        nudgeBoundary(pointID: pointID, edge: edge, delta: time - from)
+    }
+
+    private static func formatTimestamp(_ t: TimeInterval) -> String {
+        String(format: "%d:%02d", Int(t) / 60, Int(t) % 60)
+    }
+
     /// Look up a point across all games.
     func point(withID id: UUID) -> GamePoint? {
         games.flatMap(\.points).first { $0.id == id }

@@ -74,10 +74,31 @@ struct PlayerTimelinePane: View {
                         appState: appState,
                         viewport: $controller.viewport,
                         playheadTime: $controller.playheadTime,
-                        selectedPointID: $controller.selectedPointID
+                        selectedPointID: $controller.selectedPointID,
+                        ghostStart: controller.ghostStart,
+                        ghostEnd: controller.ghostEnd
                     )
                     .frame(height: 60)
                     .background(ScrollWheelHandler { deltaX in scrollViewport(deltaX: deltaX) })
+                }
+
+                // Tune bar (feedback-driven point adjustment)
+                if let tuningID = controller.tuningPointID {
+                    if let point = appState.point(withID: tuningID) {
+                        PointTuneBar(
+                            point: point,
+                            onPlayStart: { playWindow(from: point.start - 1.5, to: point.start + 1.5) },
+                            onPlayEnd: { playWindow(from: point.end - 1.5, to: point.end + 1.5) },
+                            onNudge: { edge, delta in appState.nudgeBoundary(pointID: tuningID, edge: edge, delta: delta) },
+                            onSetHere: { edge in appState.setBoundary(pointID: tuningID, edge: edge, to: controller.playheadTime) },
+                            onUndo: { appState.undo() },
+                            onDone: { controller.endTuning() }
+                        )
+                    } else {
+                        // Point vanished (undo of an insert) — drop out of tuning.
+                        Color.clear.frame(height: 0)
+                            .onAppear { controller.endTuning() }
+                    }
                 }
 
                 // Minimap
@@ -212,6 +233,26 @@ struct PlayerTimelinePane: View {
         }
     }
 
+    /// Seek to `from`, play, and pause at `to` — boundary audition for tuning.
+    private func playWindow(from: TimeInterval, to: TimeInterval) {
+        guard let player = appState.player else { return }
+        let start = max(0, from)
+        player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        controller.playheadTime = start
+
+        if let obs = previewBoundaryObserver {
+            player.removeTimeObserver(obs)
+            previewBoundaryObserver = nil
+        }
+        previewBoundaryObserver = player.addBoundaryTimeObserver(
+            forTimes: [NSValue(time: CMTime(seconds: to, preferredTimescale: 600))],
+            queue: .main
+        ) { [weak player] in
+            player?.pause()
+        }
+        player.play()
+    }
+
     private func previewPoint(_ point: GamePoint) {
         guard let player = appState.player else { return }
 
@@ -256,6 +297,68 @@ struct PlayerTimelinePane: View {
         let secs = Int(t) % 60
         let ms = Int((t - Double(Int(t))) * 100)
         return String(format: "%d:%02d.%02d", mins, secs, ms)
+    }
+}
+
+// MARK: - Point Tune Bar
+
+/// Focused boundary-adjustment controls shown while tuning a point after
+/// 👎 feedback. Every action routes through the ledger, so ⌘Z always works.
+struct PointTuneBar: View {
+    let point: GamePoint
+    var onPlayStart: () -> Void
+    var onPlayEnd: () -> Void
+    var onNudge: (BoundaryEdge, TimeInterval) -> Void
+    var onSetHere: (BoundaryEdge) -> Void
+    var onUndo: () -> Void
+    var onDone: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("Tuning #\(point.pointNumber)")
+                .font(.caption).bold()
+
+            edgeControls(label: "Start", edge: .start, playAction: onPlayStart)
+            Divider().frame(height: 18)
+            edgeControls(label: "End", edge: .end, playAction: onPlayEnd)
+
+            Spacer()
+
+            Button("Undo", action: onUndo)
+                .controlSize(.small)
+            Button("Done", action: onDone)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .keyboardShortcut(.return, modifiers: [])
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(.yellow.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.yellow.opacity(0.4)))
+    }
+
+    private func edgeControls(label: String, edge: BoundaryEdge, playAction: @escaping () -> Void) -> some View {
+        HStack(spacing: 4) {
+            Button(action: playAction) {
+                Image(systemName: "play.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("Play around the \(label.lowercased()) boundary")
+
+            Text(label).font(.caption).foregroundStyle(.secondary)
+
+            Button("−.5") { onNudge(edge, -0.5) }
+                .controlSize(.mini)
+            Button("+.5") { onNudge(edge, 0.5) }
+                .controlSize(.mini)
+            Button {
+                onSetHere(edge)
+            } label: {
+                Image(systemName: "arrow.down.to.line")
+            }
+            .buttonStyle(.borderless)
+            .help("Set \(label.lowercased()) to the playhead")
+        }
     }
 }
 
@@ -371,6 +474,8 @@ struct TrimOverlayTimelineView: View {
     @Binding var viewport: TimelineViewport
     @Binding var playheadTime: TimeInterval
     @Binding var selectedPointID: UUID?
+    var ghostStart: TimeInterval?
+    var ghostEnd: TimeInterval?
 
     // Boundary-drag tracking for ledger commits (one drag at a time)
     @State private var dragPointID: UUID?
@@ -476,6 +581,15 @@ struct TrimOverlayTimelineView: View {
                             .offset(x: x)
                             .allowsHitTesting(false)
                     }
+                }
+
+                // Ghost boundaries (pre-adjustment positions while tuning)
+                ForEach([ghostStart, ghostEnd].compactMap { $0 }, id: \.self) { ghost in
+                    Rectangle()
+                        .fill(Color.yellow.opacity(0.8))
+                        .frame(width: 1.5, height: height)
+                        .offset(x: timeToX(ghost, width: width))
+                        .allowsHitTesting(false)
                 }
 
                 // Playhead

@@ -8,11 +8,37 @@ final class TimelineController: ObservableObject {
     @Published var playheadTime: TimeInterval = 0
     @Published var selectedPointID: UUID?
 
+    // MARK: Point tuning (feedback-driven adjustment)
+    @Published var tuningPointID: UUID?
+    /// Pre-adjustment boundaries, drawn as ghosts while tuning.
+    @Published var ghostStart: TimeInterval?
+    @Published var ghostEnd: TimeInterval?
+
     /// Registered by PlayerTimelinePane; invoked from the inspector's point list.
     var previewHandler: ((GamePoint) -> Void)?
 
     func preview(_ point: GamePoint) {
         previewHandler?(point)
+    }
+
+    /// Focus the tune UI on a point: select it and zoom the viewport to
+    /// the point ± context.
+    func beginTuning(point: GamePoint, ghostStart: TimeInterval?, ghostEnd: TimeInterval?, videoDuration: TimeInterval) {
+        tuningPointID = point.id
+        selectedPointID = point.id
+        self.ghostStart = ghostStart
+        self.ghostEnd = ghostEnd
+        let lo = max(0, min(point.start, ghostStart ?? point.start) - 8)
+        let hi = min(videoDuration, max(point.end, ghostEnd ?? point.end) + 8)
+        viewport.visibleStart = lo
+        viewport.visibleEnd = hi
+        viewport.zoom = max(1.0, videoDuration / max(1, hi - lo))
+    }
+
+    func endTuning() {
+        tuningPointID = nil
+        ghostStart = nil
+        ghostEnd = nil
     }
 }
 
