@@ -163,19 +163,41 @@ final class AppState: ObservableObject {
     }
 
     /// Recount ratings across all sessions (cheap file scan, off-main).
-    func refreshRankerRatingCount() {
+    /// `thenAutoTrain` runs the debounced auto-training check afterwards —
+    /// pass it only from natural pauses (DESIGN §8.3).
+    func refreshRankerRatingCount(thenAutoTrain: Bool = false) {
         let store = sessionStore
         Task {
             let count = await Task.detached {
                 HighlightRanker.collectSamples(store: store).count
             }.value
             rankerRatingCount = count
+            if thenAutoTrain {
+                maybeAutoTrainRanker()
+            }
         }
     }
 
-    func trainHighlightRanker() {
+    private static let lastAutoTrainedCountKey = "rankerLastTrainedRatingCount"
+
+    /// Debounced background training (DESIGN §8.3): first at 30 ratings, then
+    /// every +10 beyond the last trained count. Called only at natural pauses
+    /// (video switch, Models panel) so scores never reshuffle mid-review.
+    func maybeAutoTrainRanker() {
+        guard !isTrainingRanker else { return }
+        let count = rankerRatingCount
+        guard count >= HighlightRanker.minimumRatings else { return }
+        let lastTrained = UserDefaults.standard.integer(forKey: Self.lastAutoTrainedCountKey)
+        let isFirst = rankerVersions.isEmpty
+        guard isFirst || count >= lastTrained + 10 else { return }
+        trainHighlightRanker(automatic: true)
+    }
+
+    func trainHighlightRanker(automatic: Bool = false) {
         isTrainingRanker = true
-        statusMessage = "Training highlight ranker…"
+        if !automatic {
+            statusMessage = "Training highlight ranker…"
+        }
         let store = sessionStore
 
         Task {
@@ -216,12 +238,17 @@ final class AppState: ObservableObject {
                 meta.gateDecision = decision
                 try? rankerRegistry.save(meta)
 
+                let firstActivation = decision.promote && rankerRegistry.currentVersion() == nil
                 if decision.promote {
                     rankerRegistry.promote(version: meta.version)
-                    statusMessage = "Ranker \(meta.versionLabel) trained and promoted — \(decision.reason)"
-                } else {
+                    // Announce the moment scores change meaning (DESIGN §8.3).
+                    statusMessage = firstActivation
+                        ? "Scores now ranked by your taste — \(samples.count) ratings (\(meta.versionLabel)). Revert anytime in Models."
+                        : "Ranker \(meta.versionLabel) trained and promoted — \(decision.reason)"
+                } else if !automatic {
                     statusMessage = "Ranker \(meta.versionLabel) trained but NOT promoted — \(decision.reason)"
                 }
+                UserDefaults.standard.set(samples.count, forKey: Self.lastAutoTrainedCountKey)
                 refreshRankerState()
             } catch {
                 lastErrorMessage = error.localizedDescription
@@ -314,6 +341,8 @@ final class AppState: ObservableObject {
     func selectVideo(url: URL) {
         // Save current video state before switching
         saveCurrentVideoState()
+        // Natural pause: a good moment for debounced ranker training (§8.3).
+        refreshRankerRatingCount(thenAutoTrain: true)
 
         currentAssetURL = url
         player = AVPlayer(url: url)

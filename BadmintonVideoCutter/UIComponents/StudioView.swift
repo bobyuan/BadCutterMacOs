@@ -24,9 +24,15 @@ final class TimelineController: ObservableObject {
 
     /// Registered by PlayerTimelinePane; invoked from the inspector's point list.
     var previewHandler: ((GamePoint) -> Void)?
+    /// Registered by PlayerTimelinePane; plays [from, to] then pauses.
+    var playWindowHandler: ((TimeInterval, TimeInterval) -> Void)?
 
     func preview(_ point: GamePoint) {
         previewHandler?(point)
+    }
+
+    func playWindow(from: TimeInterval, to: TimeInterval) {
+        playWindowHandler?(from, to)
     }
 
     /// Focus the tune UI on a point: select it and zoom the viewport to

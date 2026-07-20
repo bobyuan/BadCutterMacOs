@@ -65,6 +65,15 @@ struct InspectorPane: View {
                         ghostEnd: outcome.ghostEnd,
                         videoDuration: duration
                     )
+                    // Auto-audition the changed boundary (DESIGN §8.2) so the
+                    // fix can be judged without another click.
+                    if outcome.autoAdjusted {
+                        if outcome.ghostEnd != nil || outcome.ghostStart == nil {
+                            controller.playWindow(from: focusPoint.end - 1.5, to: focusPoint.end + 1.5)
+                        } else {
+                            controller.playWindow(from: focusPoint.start - 1.5, to: focusPoint.start + 1.5)
+                        }
+                    }
                 } else {
                     controller.endTuning()
                 }
@@ -472,7 +481,7 @@ struct ModelsPanel: View {
             }
             .padding(14)
         }
-        .onAppear { appState.refreshRankerRatingCount() }
+        .onAppear { appState.refreshRankerRatingCount(thenAutoTrain: true) }
     }
 
     // MARK: Highlight ranker (learned from 👍/👎 ratings)
@@ -492,7 +501,7 @@ struct ModelsPanel: View {
                     .font(.caption)
             }
 
-            Text("\(appState.rankerRatingCount) rating\(appState.rankerRatingCount == 1 ? "" : "s") collected (need \(HighlightRanker.minimumRatings))")
+            Text("\(appState.rankerRatingCount) rating\(appState.rankerRatingCount == 1 ? "" : "s") collected (need \(HighlightRanker.minimumRatings)). Trains automatically as ratings accumulate; gate keeps a worse model from taking over.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

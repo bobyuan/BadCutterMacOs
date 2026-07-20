@@ -161,9 +161,15 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## Review-Loop Upgrades (DESIGN §8)
 
-- [ ] 8.1 Keyboard review mode (j/k/space/u/n/x)
-- [ ] 8.2 Auto-audition after feedback fixes
-- [ ] 8.3 Automatic ranker training (debounced + gated + activation notice)
+- [x] 8.1 Keyboard review mode (j/k/↑↓/space/u/n/x via NSEvent monitor —
+      SwiftUI bare-key shortcuts don't fire from hidden views; live-verified j/j/u)
+- [x] 8.2 Auto-audition after feedback fixes (plays ±1.5s around the changed
+      boundary via TimelineController.playWindow)
+- [x] 8.3 Automatic ranker training (first at 30 ratings, then every +10;
+      triggers on video switch / Models panel; concordance gate unchanged;
+      first promotion announces "Scores now ranked by your taste". Awaits 30
+      real ratings for live exercise)
 - [ ] 8.4 Context menus (row + timeline gap)
 - [ ] 8.5 Batch verdicts (multi-select)
 - [ ] 8.6 Reason aggregation → config suggestions + save-for-training nudge
+| 2026-07-20 | **Review-loop upgrades 8.1–8.3** (`caa37f4`). Keyboard review mode (NSEvent monitor — hidden-button keyboardShortcut approach failed for bare keys), auto-audition after feedback fixes, debounced+gated+announced ranker auto-training. Live-verified j/j/u full loop with grabbers following. 8.4–8.6 tracked as follow-ups. |

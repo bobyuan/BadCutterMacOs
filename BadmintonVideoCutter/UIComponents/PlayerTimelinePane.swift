@@ -9,6 +9,7 @@ struct PlayerTimelinePane: View {
     @ObservedObject var controller: TimelineController
     @State private var timeObserver: Any?
     @State private var previewBoundaryObserver: Any?
+    @State private var keyMonitor: Any?
 
     var body: some View {
             VStack(spacing: 12) {
@@ -156,8 +157,96 @@ struct PlayerTimelinePane: View {
             .onAppear {
                 resetViewport()
                 controller.previewHandler = { point in previewPoint(point) }
+                controller.playWindowHandler = { from, to in playWindow(from: from, to: to) }
+                installReviewKeyMonitor()
             }
+            .onDisappear {
+                if let keyMonitor {
+                    NSEvent.removeMonitor(keyMonitor)
+                    self.keyMonitor = nil
+                }
+            }
+
             .onChange(of: appState.videoMetadata?.duration) { _, _ in resetViewport() }
+    }
+
+    // MARK: - Keyboard Review Mode (DESIGN §8.1)
+
+    /// AppKit key monitor: SwiftUI bare-key shortcuts don't fire from hidden
+    /// views, so review keys are handled at the window level. Selection drives
+    /// grabbers/tune UI, so these are thin wrappers over existing actions.
+    private func installReviewKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            MainActor.assumeIsolated {
+                guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else {
+                    return event
+                }
+                switch event.charactersIgnoringModifiers {
+                case "j": stepSelection(1); return nil
+                case "k": stepSelection(-1); return nil
+                case "u": rateSelected(.up); return nil
+                case "n": rateSelected(.down); return nil
+                case "x": toggleDeleteSelected(); return nil
+                case " ":
+                    // Replay the selected point; without a selection let the
+                    // player keep its play/pause behavior.
+                    if controller.selectedPointID != nil {
+                        replaySelected()
+                        return nil
+                    }
+                    return event
+                default: break
+                }
+                switch event.keyCode {
+                case 125: stepSelection(1); return nil    // ↓
+                case 126: stepSelection(-1); return nil   // ↑
+                default: return event
+                }
+            }
+        }
+    }
+
+    /// Ordered review targets: active points plus deleted ones (so `x` can
+    /// restore), in time order.
+    private var reviewPoints: [GamePoint] {
+        appState.games.flatMap(\.points).sorted { $0.start < $1.start }
+    }
+
+    private func stepSelection(_ delta: Int) {
+        let points = reviewPoints
+        guard !points.isEmpty else { return }
+        let currentIndex = controller.selectedPointID.flatMap { id in
+            points.firstIndex { $0.id == id }
+        }
+        let nextIndex: Int
+        if let currentIndex {
+            nextIndex = min(max(currentIndex + delta, 0), points.count - 1)
+            guard nextIndex != currentIndex else { return }
+        } else {
+            nextIndex = delta > 0 ? 0 : points.count - 1
+        }
+        previewPoint(points[nextIndex])
+    }
+
+    private func replaySelected() {
+        guard let id = controller.selectedPointID,
+              let point = appState.point(withID: id) else { return }
+        previewPoint(point)
+    }
+
+    private func rateSelected(_ rating: HighlightRating) {
+        guard let id = controller.selectedPointID,
+              let point = appState.point(withID: id),
+              point.reviewStatus != .deleted else { return }
+        appState.ratePoint(pointID: id, rating: rating)
+    }
+
+    private func toggleDeleteSelected() {
+        guard let id = controller.selectedPointID,
+              let point = appState.point(withID: id) else { return }
+        let newStatus: PointReviewStatus = point.reviewStatus == .deleted ? .unreviewed : .deleted
+        appState.setPointReviewStatus(pointID: id, status: newStatus)
     }
 
     // MARK: - Trim Zone Detection
