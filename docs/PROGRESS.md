@@ -141,6 +141,23 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
       Undo/Done — all via ledger
 - [x] Live-verified: decline path, auto-fix path (−10.4s start move), ⌘Z restore
 
+## Backlog — identified 2026-07-20, not scheduled
+
+- [ ] **Library persistence**: imported-video list is in-memory only — persist
+      paths and restore on launch (sessions already auto-restore per video).
+      Biggest daily-friction item.
+- [ ] **Release build / stable install**: archive a Release build to
+      /Applications so daily use isn't on Debug binaries from DerivedData
+      (root cause of two "stale binary" confusions).
+- [ ] **Session-storage housekeeping**: show per-video session/run disk usage;
+      prune old runs (each keeps a frames cache ~0.2–1 MB forever by design).
+- [ ] **Multi-video export**: apply the current ExportPlan to every analyzed
+      video in the library in one pass.
+- [ ] **Venue profiles (DESIGN §3.6 step 2)**: act on the Feedback Signals —
+      named config overlays + one-click "apply suggested tuning".
+- [ ] Watch-list ML swaps (DESIGN §5.2) — only if tracking failures appear.
+- [ ] Ranker live activation — automatic at 30 ratings (user-driven, no code).
+
 ## History
 
 | Date | What happened |
@@ -176,9 +193,9 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 - [x] 8.6 Feedback Signals section in Models (per-reason tallies + venue-tuning
       hint when a reason hits 3×) + one-time save-for-training nudge at 3
       corrections on an unpooled video
-| 2026-07-20 | **Review-loop upgrades 8.1–8.3** (`caa37f4`). Keyboard review mode (NSEvent monitor — hidden-button keyboardShortcut approach failed for bare keys), auto-audition after feedback fixes, debounced+gated+announced ranker auto-training. Live-verified j/j/u full loop with grabbers following. 8.4–8.6 tracked as follow-ups. |
-| 2026-07-20 | **Review-loop upgrades 8.4–8.6 complete — §8 done.** Row context menus (Play/rate/reasons/delete), gap right-click add-point, ⌘-click batch verdicts with batch bar, Feedback Signals aggregation in Models (verified live: "3× ends too early → post-roll may be too tight"), save-for-training nudge at 3 corrections. Context menu + batch click need a real mouse (AX can't synthesize them) — code is standard SwiftUI, build-verified. |
-| 2026-07-20 | **Overlap fixes + ripple drag** (`88beb01`). Reported bug: a boundary edit left #16 fully inside #17 and out of order. Fixes: (1) updatePointBoundary now clamps against active neighbors in every path; (2) points re-sort + renumber after boundary commits AND in the materializer (restores repair historical out-of-order data); (3) red ⚠️ badge on overlapping rows with repair hint; (4) per user request, dragging an orange grabber into the next/previous play now PUSHES that play's boundary along (ripple, min 0.5s kept, pushed neighbor ledger-committed on release) instead of stopping. |
-| 2026-07-20 | **Freeze fix** (`f994904`). Loading a second video could hang the UI: the §8.3 auto-train trigger ran a detached ratings scan concurrently with the main-thread session load, racing SessionStore's unsynchronized caches (Swift Dictionary corruption can spin/hang). Fixed: NSLock around videoIDCache/nextSeqCache, and the auto-train check moved to AFTER the video switch completes. |
+| 2026-07-20 | **Review-loop upgrades 8.1–8.3** (`e1ab268`). Keyboard review mode (NSEvent monitor — hidden-button keyboardShortcut approach failed for bare keys), auto-audition after feedback fixes, debounced+gated+announced ranker auto-training. Live-verified j/j/u full loop with grabbers following. 8.4–8.6 tracked as follow-ups. |
+| 2026-07-20 | **Review-loop upgrades 8.4–8.6 complete — §8 done** (`45eb087`). Row context menus (Play/rate/reasons/delete), gap right-click add-point, ⌘-click batch verdicts with batch bar, Feedback Signals aggregation in Models (verified live: "3× ends too early → post-roll may be too tight"), save-for-training nudge at 3 corrections. Context menu + batch click need a real mouse (AX can't synthesize them) — code is standard SwiftUI, build-verified. |
+| 2026-07-20 | **Overlap fixes + ripple drag** (`fde3986`). Reported bug: a boundary edit left #16 fully inside #17 and out of order. Fixes: (1) updatePointBoundary now clamps against active neighbors in every path; (2) points re-sort + renumber after boundary commits AND in the materializer (restores repair historical out-of-order data); (3) red ⚠️ badge on overlapping rows with repair hint; (4) per user request, dragging an orange grabber into the next/previous play now PUSHES that play's boundary along (ripple, min 0.5s kept, pushed neighbor ledger-committed on release) instead of stopping. |
+| 2026-07-20 | **Freeze fix** (`0c3b3ed`). Loading a second video could hang the UI: the §8.3 auto-train trigger ran a detached ratings scan concurrently with the main-thread session load, racing SessionStore's unsynchronized caches (Swift Dictionary corruption can spin/hang). Fixed: NSLock around videoIDCache/nextSeqCache, and the auto-train check moved to AFTER the video switch completes. |
 | 2026-07-20 | **Freeze fix live-verified** (two-video load + keyboard interaction responsive; resort + overlap badges confirmed on real 32-point data) · **History label polish**: history rows now resolve point labels against each run's own materialized points ("Moved #16 (3:34) end +8.1s" instead of "a point" for non-current runs). |
-| 2026-07-20 | **D-007 resolved** (`0283794`). Shadow eval re-scores session audio through the evaluated hit model (HitClassifier over meta.filePath, audio-only), remaps windows onto cached frames (ShadowEval.remapAudioScores, unit-tested), replays the pipeline; candidate vs current evaluated like-for-like with stored-metrics fallback. filePath backfills on session open. |
+| 2026-07-20 | **D-007 resolved** (`afc85fe`). Shadow eval re-scores session audio through the evaluated hit model (HitClassifier over meta.filePath, audio-only), remaps windows onto cached frames (ShadowEval.remapAudioScores, unit-tested), replays the pipeline; candidate vs current evaluated like-for-like with stored-metrics fallback. filePath backfills on session open. |
