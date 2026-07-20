@@ -198,6 +198,10 @@ struct PointListView: View {
                                     },
                                     isBatchSelected: batchSelection.contains(point.id),
                                     isOverlapping: appState.overlappingPointIDs.contains(point.id),
+                                    serveSide: appState.effectiveServeSide(for: point.id),
+                                    onOverrideServe: { side in
+                                        appState.overrideServeSide(pointID: point.id, side: side)
+                                    },
                                     onTap: {
                                         handleTap(on: point)
                                     }
@@ -253,6 +257,10 @@ struct PointListView: View {
                     },
                     isBatchSelected: batchSelection.contains(entry.point.id),
                     isOverlapping: appState.overlappingPointIDs.contains(entry.point.id),
+                    serveSide: appState.effectiveServeSide(for: entry.point.id),
+                    onOverrideServe: { side in
+                        appState.overrideServeSide(pointID: entry.point.id, side: side)
+                    },
                     onTap: {
                         handleTap(on: entry.point)
                     }
@@ -326,6 +334,8 @@ struct PointRow: View {
     var onFeedback: ((PointFeedbackReason) -> Void)?
     var isBatchSelected: Bool = false
     var isOverlapping: Bool = false
+    var serveSide: ServeDetector.ServeSide?
+    var onOverrideServe: ((ServeDetector.ServeSide) -> Void)?
     let onTap: () -> Void
 
     private var progress: Double {
@@ -456,6 +466,12 @@ struct PointRow: View {
                     ForEach(PointFeedbackReason.allCases.filter { $0 != .notHighlight }) { reason in
                         Button(reason.label) { onFeedback?(reason) }
                     }
+                }
+            }
+            if point.reviewStatus != .deleted, let onOverrideServe {
+                Menu("Score wrong — serve side") {
+                    Button(serveSide == .left ? "✓ Left serves" : "Left serves") { onOverrideServe(.left) }
+                    Button(serveSide == .right ? "✓ Right serves" : "Right serves") { onOverrideServe(.right) }
                 }
             }
             Divider()

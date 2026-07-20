@@ -985,6 +985,7 @@ struct HistoryPanel: View {
         case .boundaryChanged: return "arrow.left.and.right"
         case .highlightRated: return "hand.thumbsup"
         case .pointFeedback: return "exclamationmark.bubble"
+        case .serveSideOverridden: return "arrow.left.arrow.right"
         case .savedToPool: return "square.and.arrow.down.on.square"
         case .exported: return "square.and.arrow.up"
         case .undo: return "arrow.uturn.left"
@@ -1013,6 +1014,8 @@ struct HistoryPanel: View {
         case .pointFeedback(let id, let reason):
             let label = PointFeedbackReason(rawValue: reason)?.label ?? reason
             return "Feedback on \(pointLabel(id, run: run)): \(label)"
+        case .serveSideOverridden(let id, let side):
+            return "Pinned serve side of \(pointLabel(id, run: run)) to \(side)"
         case .savedToPool(let rally, let background):
             return "Saved for training: \(rally) rally + \(background) background clips"
         case .exported(let output):

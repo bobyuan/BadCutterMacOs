@@ -21,6 +21,9 @@ enum SessionEvent: Codable, Equatable {
     /// recorded as ordinary correction events; the reason label itself is
     /// tuning signal (e.g. recurring "startsTooEarly" → pre-roll too big).
     case pointFeedback(pointID: UUID, reason: String)
+    /// Manual serve-side correction (score/party fix). Audit-only; wins over
+    /// automatic detection permanently for that point.
+    case serveSideOverridden(pointID: UUID, side: String)
     case savedToPool(rallyClips: Int, backgroundClips: Int)
     case exported(output: String)
     case undo

@@ -127,6 +127,9 @@ final class AppState: ObservableObject {
     @Published var editedPointIDs: Set<UUID> = []
     /// Latest 👍/👎 per point, derived from `highlightRated` events.
     @Published var pointRatings: [UUID: HighlightRating] = [:]
+    /// Manual serve-side corrections, derived from the ledger; they win over
+    /// automatic detection permanently.
+    @Published var serveOverrides: [UUID: ServeDetector.ServeSide] = [:]
     private var sessionBaseline: SessionBaseline?
     private var sessionEvents: [SessionEvent] = []
     private let sessionStore = SessionStore.shared
@@ -791,6 +794,7 @@ final class AppState: ObservableObject {
         // Ratings are audit events, not corrections: last one per point wins,
         // and undo/redo never touches them.
         var ratings: [UUID: HighlightRating] = [:]
+        var overrides: [UUID: ServeDetector.ServeSide] = [:]
         for event in sessionEvents {
             if case .highlightRated(let pointID, let raw) = event {
                 if let rating = HighlightRating(rawValue: raw) {
@@ -799,8 +803,13 @@ final class AppState: ObservableObject {
                     ratings.removeValue(forKey: pointID)
                 }
             }
+            if case .serveSideOverridden(let pointID, let raw) = event,
+               let side = ServeDetector.ServeSide(rawValue: raw) {
+                overrides[pointID] = side
+            }
         }
         pointRatings = ratings
+        serveOverrides = overrides
     }
 
     /// Derived review state for the point-list chip.
@@ -1294,6 +1303,19 @@ final class AppState: ObservableObject {
 
     // MARK: - Serve Detection & Scoring
 
+    /// The serve side scoring will use for a point (override beats detection).
+    func effectiveServeSide(for pointID: UUID) -> ServeDetector.ServeSide? {
+        serveOverrides[pointID] ?? serveSides[pointID]
+    }
+
+    /// Manual score fix: pin a point's serve side (ledger-recorded; wins over
+    /// re-detection permanently) and recompute the score chain.
+    func overrideServeSide(pointID: UUID, side: ServeDetector.ServeSide) {
+        recordEvent(.serveSideOverridden(pointID: pointID, side: side.rawValue))
+        computeAllScores()
+        statusMessage = "Serve side pinned to \(side.rawValue) — scores recalculated."
+    }
+
     /// Points whose start moved since their serve side was detected.
     private var serveDirtyIDs: Set<UUID> = []
     private var serveRedetectTask: Task<Void, Never>?
@@ -1308,7 +1330,8 @@ final class AppState: ObservableObject {
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard let self, !Task.isCancelled, self.currentAssetURL == url else { return }
             let dirty = self.activePoints.filter {
-                self.serveSides[$0.id] == nil || self.serveDirtyIDs.contains($0.id)
+                self.serveOverrides[$0.id] == nil
+                    && (self.serveSides[$0.id] == nil || self.serveDirtyIDs.contains($0.id))
             }
             guard !dirty.isEmpty else { return }
             let sides = await ServeDetector.detectServes(videoURL: url, points: dirty)
@@ -1351,14 +1374,14 @@ final class AppState: ObservableObject {
             let nextGameFirstServe: ServeDetector.ServeSide?
             if gameIdx < games.count - 1 {
                 let nextGameActivePoint = games[gameIdx + 1].points.first { $0.reviewStatus != .deleted }
-                nextGameFirstServe = nextGameActivePoint.flatMap { serveSides[$0.id] }
+                nextGameFirstServe = nextGameActivePoint.flatMap { effectiveServeSide(for: $0.id) }
             } else {
                 nextGameFirstServe = nil
             }
 
             let scores = ServeDetector.computeScores(
                 points: game.points,
-                serveSides: serveSides,
+                serveSides: serveSides.merging(serveOverrides) { _, manual in manual },
                 nextGameFirstServe: nextGameFirstServe
             )
             allScores.merge(scores) { _, new in new }
