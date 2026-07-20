@@ -598,11 +598,18 @@ struct TrimOverlayTimelineView: View {
                     let x = timeToX(trim.start, width: width)
                     let w = timeToX(trim.end, width: width) - x
 
-                    // Trim block
+                    // Trim block (right-click: add a point in this gap, §8.4)
                     Rectangle()
                         .fill(trimColor(for: trim).opacity(0.35))
                         .frame(width: max(1, w), height: height)
                         .offset(x: x)
+                        .contextMenu {
+                            Button("Add point in this gap") {
+                                if let id = appState.addPoint(at: (trim.start + trim.end) / 2) {
+                                    selectedPointID = id
+                                }
+                            }
+                        }
 
                     // Left drag handle — adjusts the end of the preceding point
                     TrimDragHandle(edge: .leading)

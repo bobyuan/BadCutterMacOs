@@ -758,6 +758,12 @@ final class AppState: ObservableObject {
         sessionEvents.append(event)
         sessionStore.append(event, for: url, run: currentAnalysisRun)
         refreshSessionDerivedState()
+
+        // §8.6: after a few corrections on a video that isn't in the training
+        // pool yet, nudge once toward Save for Training.
+        if event.isCorrection, currentRunAdjustmentCount == 3, !currentVideoInPool {
+            statusMessage = "3 corrections on this video — Save for Training (Points panel) so the models learn from them."
+        }
     }
 
     private func refreshSessionDerivedState() {
@@ -1011,6 +1017,20 @@ final class AppState: ObservableObject {
         default:
             return nil
         }
+    }
+
+    /// Feedback-reason tallies for the loaded video, across all runs
+    /// (DESIGN §8.6) — recurring complaints are config-tuning signal.
+    func feedbackReasonCounts() -> [(reason: PointFeedbackReason, count: Int)] {
+        guard let url = currentAssetURL, let vid = sessionStore.videoID(for: url) else { return [] }
+        var counts: [PointFeedbackReason: Int] = [:]
+        for entry in sessionStore.loadLedger(forVideoID: vid) {
+            if case .pointFeedback(_, let raw) = entry.event,
+               let reason = PointFeedbackReason(rawValue: raw), reason != .notHighlight {
+                counts[reason, default: 0] += 1
+            }
+        }
+        return counts.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
     }
 
     private func adjusterContext(for point: GamePoint) -> PointAdjuster.Context {

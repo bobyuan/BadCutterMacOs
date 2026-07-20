@@ -9,6 +9,8 @@ struct PointListView: View {
 
     @State private var sortByScore = false
     @State private var showReanalyzeConfirm = false
+    /// Batch verdicts (DESIGN §8.5): membership toggled by ⌘-click.
+    @State private var batchSelection: Set<UUID> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -70,6 +72,10 @@ struct PointListView: View {
                     .help("Number of points marked as highlights")
                 }
 
+                if batchSelection.count >= 2 {
+                    batchBar
+                }
+
                 if sortByScore {
                     scoreSortedList
                 } else {
@@ -123,6 +129,47 @@ struct PointListView: View {
               : "You are viewing an older analysis version")
     }
 
+    // MARK: - Batch Verdicts (DESIGN §8.5)
+
+    private var batchBar: some View {
+        HStack(spacing: 8) {
+            Text("\(batchSelection.count) selected")
+                .font(.caption).bold()
+            Button("Delete") { batchApply { appState.setPointReviewStatus(pointID: $0, status: .deleted) } }
+                .controlSize(.small)
+            Button("👍") { batchApply { appState.ratePoint(pointID: $0, rating: .up) } }
+                .controlSize(.small)
+            Button("👎") { batchApply { appState.ratePoint(pointID: $0, rating: .down) } }
+                .controlSize(.small)
+            Spacer()
+            Button("Clear") { batchSelection.removeAll() }
+                .controlSize(.small)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 4)
+        .background(Rectangle().fill(Color.accentColor.opacity(0.1)))
+    }
+
+    private func batchApply(_ action: (UUID) -> Void) {
+        for id in batchSelection { action(id) }
+        batchSelection.removeAll()
+    }
+
+    /// ⌘-click toggles batch membership; a plain click clears the batch and
+    /// previews as before.
+    private func handleTap(on point: GamePoint) {
+        if NSEvent.modifierFlags.contains(.command) {
+            if batchSelection.contains(point.id) {
+                batchSelection.remove(point.id)
+            } else {
+                batchSelection.insert(point.id)
+            }
+        } else {
+            batchSelection.removeAll()
+            onSelectPoint?(point)
+        }
+    }
+
     // MARK: - Lists
 
     private var timeSortedList: some View {
@@ -149,8 +196,9 @@ struct PointListView: View {
                                     onFeedback: { reason in
                                         onFeedback?(point, reason)
                                     },
+                                    isBatchSelected: batchSelection.contains(point.id),
                                     onTap: {
-                                        onSelectPoint?(point)
+                                        handleTap(on: point)
                                     }
                                 )
                             }
@@ -202,8 +250,9 @@ struct PointListView: View {
                     onFeedback: { reason in
                         onFeedback?(entry.point, reason)
                     },
+                    isBatchSelected: batchSelection.contains(entry.point.id),
                     onTap: {
-                        onSelectPoint?(entry.point)
+                        handleTap(on: entry.point)
                     }
                 )
             }
@@ -273,6 +322,7 @@ struct PointRow: View {
     let onToggleDelete: () -> Void
     var onRate: ((HighlightRating) -> Void)?
     var onFeedback: ((PointFeedbackReason) -> Void)?
+    var isBatchSelected: Bool = false
     let onTap: () -> Void
 
     private var progress: Double {
@@ -379,9 +429,28 @@ struct PointRow: View {
         .padding(.vertical, isSelected ? 2 : 0)
         .opacity(point.reviewStatus == .deleted ? 0.4 : (0.5 + point.confidence * 0.5))
         .strikethrough(point.reviewStatus == .deleted)
-        .listRowBackground(isSelected ? Color.accentColor.opacity(0.12) : nil)
+        .listRowBackground(
+            isBatchSelected
+                ? Color.orange.opacity(0.18)
+                : (isSelected ? Color.accentColor.opacity(0.12) : nil)
+        )
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
+        // Right-click verdicts (DESIGN §8.4)
+        .contextMenu {
+            Button("Play") { onTap() }
+            if point.reviewStatus != .deleted, let onRate {
+                Button("👍 Highlight") { onRate(.up) }
+                Button(PointFeedbackReason.notHighlight.label) { onRate(.down) }
+                Menu("What's wrong…") {
+                    ForEach(PointFeedbackReason.allCases.filter { $0 != .notHighlight }) { reason in
+                        Button(reason.label) { onFeedback?(reason) }
+                    }
+                }
+            }
+            Divider()
+            Button(point.reviewStatus == .deleted ? "Restore" : "Delete", action: onToggleDelete)
+        }
     }
 
     private func formatTime(_ t: TimeInterval) -> String {

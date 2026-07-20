@@ -169,7 +169,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
       triggers on video switch / Models panel; concordance gate unchanged;
       first promotion announces "Scores now ranked by your taste". Awaits 30
       real ratings for live exercise)
-- [ ] 8.4 Context menus (row + timeline gap)
-- [ ] 8.5 Batch verdicts (multi-select)
-- [ ] 8.6 Reason aggregation → config suggestions + save-for-training nudge
+- [x] 8.4 Context menus (row: Play/👍/👎/reasons/Delete; timeline gap:
+      "Add point in this gap" via the add-point span heuristic)
+- [x] 8.5 Batch verdicts (⌘-click toggles membership, orange row tint,
+      batch bar with Delete/👍/👎/Clear when ≥2 selected)
+- [x] 8.6 Feedback Signals section in Models (per-reason tallies + venue-tuning
+      hint when a reason hits 3×) + one-time save-for-training nudge at 3
+      corrections on an unpooled video
 | 2026-07-20 | **Review-loop upgrades 8.1–8.3** (`caa37f4`). Keyboard review mode (NSEvent monitor — hidden-button keyboardShortcut approach failed for bare keys), auto-audition after feedback fixes, debounced+gated+announced ranker auto-training. Live-verified j/j/u full loop with grabbers following. 8.4–8.6 tracked as follow-ups. |
+| 2026-07-20 | **Review-loop upgrades 8.4–8.6 complete — §8 done.** Row context menus (Play/rate/reasons/delete), gap right-click add-point, ⌘-click batch verdicts with batch bar, Feedback Signals aggregation in Models (verified live: "3× ends too early → post-roll may be too tight"), save-for-training nudge at 3 corrections. Context menu + batch click need a real mouse (AX can't synthesize them) — code is standard SwiftUI, build-verified. |

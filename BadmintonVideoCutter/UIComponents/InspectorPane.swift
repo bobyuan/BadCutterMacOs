@@ -478,6 +478,8 @@ struct ModelsPanel: View {
                 hitDetectionSection
                 Divider()
                 rankerSection
+                Divider()
+                feedbackSignalsSection
             }
             .padding(14)
         }
@@ -669,6 +671,58 @@ struct ModelsPanel: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: Feedback signals (DESIGN §8.6)
+
+    @ViewBuilder
+    private var feedbackSignalsSection: some View {
+        let counts = appState.feedbackReasonCounts()
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Feedback Signals")
+                .font(.headline)
+            if counts.isEmpty {
+                Text("No detection complaints on this video yet. 👎 reasons collect here and will drive per-venue tuning.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(counts, id: \.reason) { item in
+                    HStack(spacing: 6) {
+                        Text("\(item.count)×")
+                            .font(.caption).bold().monospacedDigit()
+                        Text(item.reason.label)
+                            .font(.caption)
+                        Spacer()
+                    }
+                }
+                if let top = counts.first, top.count >= 3 {
+                    Text(hint(for: top.reason, count: top.count))
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    private func hint(for reason: PointFeedbackReason, count: Int) -> String {
+        switch reason {
+        case .startsTooEarly:
+            return "\(count)× — pre-roll may be too generous for this venue (venue profiles, DESIGN §3.6)."
+        case .endsTooLate:
+            return "\(count)× — post-roll may be too generous for this venue."
+        case .startsTooLate:
+            return "\(count)× — pre-roll may be too tight for this venue."
+        case .endsTooEarly:
+            return "\(count)× — post-roll may be too tight for this venue."
+        case .missedPointBefore:
+            return "\(count)× — detection threshold may be too strict; consider a more aggressive preset."
+        case .shouldSplit:
+            return "\(count)× — split sensitivity may be too low for this venue."
+        case .notAPoint:
+            return "\(count)× — detection threshold may be too loose; consider a more conservative preset."
+        case .notHighlight:
+            return ""
         }
     }
 
