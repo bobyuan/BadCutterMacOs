@@ -483,8 +483,20 @@ struct PointRow: View {
             }
             if point.reviewStatus != .deleted, let onOverrideServe {
                 Menu("Score wrong — who serves?") {
-                    Button(serveSide == .left ? "✓ \(serveLabelA) serves" : "\(serveLabelA) serves") { onOverrideServe(.left) }
-                    Button(serveSide == .right ? "✓ \(serveLabelB) serves" : "\(serveLabelB) serves") { onOverrideServe(.right) }
+                    // Native checkmark on the currently-believed server, so
+                    // "pick the other one" is a single obvious click.
+                    Toggle("\(serveLabelA) serves", isOn: Binding(
+                        get: { serveSide == .left },
+                        set: { _ in onOverrideServe(.left) }
+                    ))
+                    Toggle("\(serveLabelB) serves", isOn: Binding(
+                        get: { serveSide == .right },
+                        set: { _ in onOverrideServe(.right) }
+                    ))
+                    if serveSide == nil || serveSide == .unknown {
+                        Divider()
+                        Text("Server not detected yet for this play")
+                    }
                 }
                 Button("Recalculate score from here") { onRecalculateScore?() }
             }
