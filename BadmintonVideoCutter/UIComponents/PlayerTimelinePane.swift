@@ -184,8 +184,8 @@ struct PlayerTimelinePane: View {
                     return event
                 }
                 switch event.charactersIgnoringModifiers {
-                case "j": stepSelection(1); return nil
-                case "k": stepSelection(-1); return nil
+                case "j": if controller.splitMode { return nil }; stepSelection(1); return nil
+                case "k": if controller.splitMode { return nil }; stepSelection(-1); return nil
                 case "u": rateSelected(.up); return nil
                 case "n": rateSelected(.down); return nil
                 case "x": toggleDeleteSelected(); return nil
@@ -202,8 +202,8 @@ struct PlayerTimelinePane: View {
                 default: break
                 }
                 switch event.keyCode {
-                case 125: stepSelection(1); return nil    // ↓
-                case 126: stepSelection(-1); return nil   // ↑
+                case 125: if controller.splitMode { return nil }; stepSelection(1); return nil    // ↓
+                case 126: if controller.splitMode { return nil }; stepSelection(-1); return nil   // ↑
                 case 53:                                  // Esc
                     if controller.splitMode {
                         controller.splitMode = false

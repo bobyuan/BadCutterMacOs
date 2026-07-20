@@ -16,6 +16,8 @@ struct InspectorPane: View {
     @ObservedObject var controller: TimelineController
     @Binding var showCalibration: Bool
     @State private var tab: InspectorTab = .points
+    /// Play clicked while split mode was active — awaiting exit confirmation.
+    @State private var splitExitCandidate: GamePoint?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,7 +53,11 @@ struct InspectorPane: View {
             selectedPointID: controller.selectedPointID,
             playheadTime: controller.playheadTime,
             onSelectPoint: { point in
-                controller.preview(point)
+                if controller.splitMode {
+                    splitExitCandidate = point
+                } else {
+                    controller.preview(point)
+                }
             },
             onFeedback: { point, reason in
                 guard let outcome = appState.applyFeedback(pointID: point.id, reason: reason) else { return }
@@ -84,6 +90,27 @@ struct InspectorPane: View {
             if !appState.games.isEmpty && appState.pointScores.isEmpty {
                 appState.detectServesAndScores()
             }
+        }
+        .alert(
+            "Exit split mode?",
+            isPresented: Binding(
+                get: { splitExitCandidate != nil },
+                set: { if !$0 { splitExitCandidate = nil } }
+            )
+        ) {
+            Button("Exit and switch play") {
+                controller.splitMode = false
+                if let point = splitExitCandidate {
+                    controller.preview(point)
+                }
+                splitExitCandidate = nil
+                appState.statusMessage = "Split canceled."
+            }
+            Button("Stay in split mode", role: .cancel) {
+                splitExitCandidate = nil
+            }
+        } message: {
+            Text("The cut isn't done yet — switching plays will cancel it.")
         }
     }
 }
