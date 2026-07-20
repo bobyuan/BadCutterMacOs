@@ -993,6 +993,7 @@ final class AppState: ObservableObject {
 
     /// Public wrapper so drag handles can refresh trims + scores on release.
     func refreshDerivedAfterBoundaryChange() {
+        resortAndRenumberPoints()
         deriveTrimSegments()
         computeAllScores()
     }
@@ -1093,6 +1094,7 @@ final class AppState: ObservableObject {
     func commitPointBoundary(pointID: UUID, edge: BoundaryEdge, from: TimeInterval, to: TimeInterval) {
         guard abs(from - to) > 0.01 else { return }
         recordEvent(.boundaryChanged(pointID: pointID, edge: edge, from: from, to: to))
+        resortAndRenumberPoints()
         refreshHighlightScores()
     }
 
@@ -1337,24 +1339,71 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Update a point's rally segment start or end time.
+    /// Update a point's rally segment start or end time. Clamped against the
+    /// video bounds AND the neighboring active points, so no edit path can
+    /// create overlapping points.
     func updatePointBoundary(pointID: UUID, newStart: TimeInterval? = nil, newEnd: TimeInterval? = nil) {
         let duration = videoMetadata?.duration ?? .infinity
+        let limits = boundaryLimits(for: pointID)
         for gameIdx in games.indices {
             if let pointIdx = games[gameIdx].points.firstIndex(where: { $0.id == pointID }) {
                 if let ns = newStart {
-                    let minStart = max(0, ns)
+                    let minStart = max(0, max(ns, limits.minStart))
                     let maxStart = games[gameIdx].points[pointIdx].rallySegment.end - 0.5
                     games[gameIdx].points[pointIdx].rallySegment.start = min(minStart, maxStart)
                 }
                 if let ne = newEnd {
-                    let maxEnd = min(duration, ne)
+                    let maxEnd = min(min(duration, limits.maxEnd), ne)
                     let minEnd = games[gameIdx].points[pointIdx].rallySegment.start + 0.5
                     games[gameIdx].points[pointIdx].rallySegment.end = max(maxEnd, minEnd)
                 }
                 return
             }
         }
+    }
+
+    /// Manual-drag variant of updatePointBoundary: crossing a neighboring
+    /// active point PUSHES that neighbor's boundary along (ripple) instead of
+    /// stopping, capped so the neighbor keeps at least 0.5s. The pushed
+    /// neighbor must be committed by the caller on release (see tune handles).
+    func updatePointBoundaryPushing(pointID: UUID, newStart: TimeInterval? = nil, newEnd: TimeInterval? = nil) {
+        guard let target = point(withID: pointID) else { return }
+        let active = activePoints
+        if let ns = newStart,
+           let prev = active.last(where: { $0.end <= target.start + 0.01 && $0.id != pointID }),
+           ns < prev.end {
+            updatePointBoundary(pointID: prev.id, newEnd: max(prev.start + 0.5, ns))
+        }
+        if let ne = newEnd,
+           let next = active.first(where: { $0.start >= target.end - 0.01 && $0.id != pointID }),
+           ne > next.start {
+            updatePointBoundary(pointID: next.id, newStart: min(next.end - 0.5, ne))
+        }
+        updatePointBoundary(pointID: pointID, newStart: newStart, newEnd: newEnd)
+    }
+
+    /// Restore chronological order + numbering after boundary edits.
+    func resortAndRenumberPoints() {
+        for gameIdx in games.indices {
+            games[gameIdx].points.sort { $0.start < $1.start }
+            for i in games[gameIdx].points.indices {
+                games[gameIdx].points[i].pointNumber = i + 1
+            }
+        }
+    }
+
+    /// Active points that overlap their predecessor — surfaced as a warning
+    /// so historical overlaps (from before neighbor clamping) get repaired.
+    var overlappingPointIDs: Set<UUID> {
+        var result: Set<UUID> = []
+        for game in games {
+            let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+            for i in 1..<max(1, active.count) where active[i].start < active[i - 1].end - 0.05 {
+                result.insert(active[i].id)
+                result.insert(active[i - 1].id)
+            }
+        }
+        return result
     }
 
     // MARK: - Calibration Persistence

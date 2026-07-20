@@ -197,6 +197,7 @@ struct PointListView: View {
                                         onFeedback?(point, reason)
                                     },
                                     isBatchSelected: batchSelection.contains(point.id),
+                                    isOverlapping: appState.overlappingPointIDs.contains(point.id),
                                     onTap: {
                                         handleTap(on: point)
                                     }
@@ -251,6 +252,7 @@ struct PointListView: View {
                         onFeedback?(entry.point, reason)
                     },
                     isBatchSelected: batchSelection.contains(entry.point.id),
+                    isOverlapping: appState.overlappingPointIDs.contains(entry.point.id),
                     onTap: {
                         handleTap(on: entry.point)
                     }
@@ -323,6 +325,7 @@ struct PointRow: View {
     var onRate: ((HighlightRating) -> Void)?
     var onFeedback: ((PointFeedbackReason) -> Void)?
     var isBatchSelected: Bool = false
+    var isOverlapping: Bool = false
     let onTap: () -> Void
 
     private var progress: Double {
@@ -355,6 +358,13 @@ struct PointRow: View {
                 Text(String(format: "(%.1fs)", point.duration))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if isOverlapping {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .help("Overlaps a neighboring point — delete one or drag the boundaries apart.")
+                }
 
                 if let highlightScore {
                     HStack(spacing: 2) {

@@ -571,6 +571,8 @@ struct TrimOverlayTimelineView: View {
     @State private var dragOriginValue: TimeInterval?
     // Tuned-point handle drag origin (start or end value at drag begin)
     @State private var tuneDragOrigin: TimeInterval?
+    // Neighbor pushed during a ripple drag: (id, edge, original value)
+    @State private var tuneDragNeighborOrigin: (id: UUID, edge: BoundaryEdge, value: TimeInterval)?
 
     var body: some View {
         GeometryReader { geo in
@@ -758,18 +760,27 @@ struct TrimOverlayTimelineView: View {
                 DragGesture(coordinateSpace: .named("trimTimeline"))
                     .onChanged { value in
                         let raw = xToTime(value.location.x, width: width)
-                        let limits = appState.boundaryLimits(for: pointID)
                         guard let current = appState.point(withID: pointID) else { return }
                         if tuneDragOrigin == nil {
                             tuneDragOrigin = edge == .start ? current.start : current.end
+                            // Remember the neighbor this drag may push (ripple).
+                            let active = appState.activePoints
+                            switch edge {
+                            case .start:
+                                if let prev = active.last(where: { $0.end <= current.start + 0.01 && $0.id != pointID }) {
+                                    tuneDragNeighborOrigin = (prev.id, .end, prev.end)
+                                }
+                            case .end:
+                                if let next = active.first(where: { $0.start >= current.end - 0.01 && $0.id != pointID }) {
+                                    tuneDragNeighborOrigin = (next.id, .start, next.start)
+                                }
+                            }
                         }
                         switch edge {
                         case .start:
-                            let clamped = min(max(raw, limits.minStart + 0.05), current.end - 0.5)
-                            appState.updatePointBoundary(pointID: pointID, newStart: clamped)
+                            appState.updatePointBoundaryPushing(pointID: pointID, newStart: min(raw, current.end - 0.5))
                         case .end:
-                            let clamped = max(min(raw, limits.maxEnd - 0.05), current.start + 0.5)
-                            appState.updatePointBoundary(pointID: pointID, newEnd: clamped)
+                            appState.updatePointBoundaryPushing(pointID: pointID, newEnd: max(raw, current.start + 0.5))
                         }
                     }
                     .onEnded { _ in
@@ -780,9 +791,23 @@ struct TrimOverlayTimelineView: View {
                                 from: from,
                                 to: edge == .start ? current.start : current.end
                             )
-                            appState.refreshDerivedAfterBoundaryChange()
                         }
+                        // Commit the pushed neighbor too, so replay matches.
+                        if let neighbor = tuneDragNeighborOrigin,
+                           let now = appState.point(withID: neighbor.id) {
+                            let current = neighbor.edge == .start ? now.start : now.end
+                            if abs(current - neighbor.value) > 0.01 {
+                                appState.commitPointBoundary(
+                                    pointID: neighbor.id,
+                                    edge: neighbor.edge,
+                                    from: neighbor.value,
+                                    to: current
+                                )
+                            }
+                        }
+                        appState.refreshDerivedAfterBoundaryChange()
                         tuneDragOrigin = nil
+                        tuneDragNeighborOrigin = nil
                     }
             )
     }

@@ -168,6 +168,11 @@ enum SessionMaterializer {
                 break
             }
         }
+        // Boundary edits can reorder points in time; keep the list
+        // chronological and the numbering sequential.
+        for i in games.indices {
+            renumber(&games[i])
+        }
         return games
     }
 
