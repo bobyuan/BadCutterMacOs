@@ -6,6 +6,8 @@ struct PointListView: View {
     var playheadTime: TimeInterval = 0
     var onSelectPoint: ((GamePoint) -> Void)?
 
+    @State private var sortByScore = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Points")
@@ -27,12 +29,57 @@ struct PointListView: View {
             } else {
                 let totalPoints = appState.games.reduce(0) { $0 + $1.activePointCount }
                 let gameCount = appState.games.count
-                Text("\(totalPoints) points in \(gameCount) game\(gameCount == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
+                HStack {
+                    Text("\(totalPoints) points in \(gameCount) game\(gameCount == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("", selection: $sortByScore) {
+                        Text("Time").tag(false)
+                        Text("Score").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 120)
+                }
+                .padding(.horizontal)
 
-                List {
+                if !appState.highlightScores.isEmpty, totalPoints > 1 {
+                    HStack(spacing: 8) {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.yellow)
+                        Slider(
+                            value: Binding(
+                                get: { Double(min(appState.highlightTopK, totalPoints)) },
+                                set: { appState.highlightTopK = Int($0.rounded()) }
+                            ),
+                            in: 1...Double(totalPoints),
+                            step: 1
+                        )
+                        Text("Top \(min(appState.highlightTopK, totalPoints))")
+                            .font(.caption).monospacedDigit()
+                            .frame(width: 50, alignment: .trailing)
+                    }
+                    .padding(.horizontal)
+                    .help("Number of points marked as highlights")
+                }
+
+                if sortByScore {
+                    scoreSortedList
+                } else {
+                    timeSortedList
+                }
+
+                saveForTrainingButton
+            }
+        }
+    }
+
+    // MARK: - Lists
+
+    private var timeSortedList: some View {
+        List {
                     ForEach(appState.games) { game in
                         Section {
                             ForEach(game.points) { point in
@@ -41,9 +88,16 @@ struct PointListView: View {
                                     isSelected: point.id == selectedPointID,
                                     playheadTime: playheadTime,
                                     score: appState.pointScores[point.id],
+                                    chip: appState.reviewChip(for: point),
+                                    rating: appState.pointRatings[point.id],
+                                    highlightScore: appState.highlightScores[point.id],
+                                    isTopHighlight: appState.topHighlightIDs.contains(point.id),
                                     onToggleDelete: {
                                         let newStatus: PointReviewStatus = point.reviewStatus == .deleted ? .unreviewed : .deleted
                                         appState.setPointReviewStatus(pointID: point.id, status: newStatus)
+                                    },
+                                    onRate: { rating in
+                                        appState.ratePoint(pointID: point.id, rating: rating)
                                     },
                                     onTap: {
                                         onSelectPoint?(point)
@@ -67,9 +121,38 @@ struct PointListView: View {
                             }
                         }
                     }
-                }
+        }
+    }
 
-                saveForTrainingButton
+    /// Flat ranking of active points by highlight score (highest first).
+    private var scoreSortedList: some View {
+        let ranked: [(game: Game, point: GamePoint)] = appState.games
+            .flatMap { game in game.points.map { (game, $0) } }
+            .filter { $0.1.reviewStatus != .deleted }
+            .sorted { (appState.highlightScores[$0.1.id] ?? 0) > (appState.highlightScores[$1.1.id] ?? 0) }
+
+        return List {
+            ForEach(ranked, id: \.point.id) { entry in
+                PointRow(
+                    point: entry.point,
+                    isSelected: entry.point.id == selectedPointID,
+                    playheadTime: playheadTime,
+                    score: appState.pointScores[entry.point.id],
+                    chip: appState.reviewChip(for: entry.point),
+                    rating: appState.pointRatings[entry.point.id],
+                    highlightScore: appState.highlightScores[entry.point.id],
+                    isTopHighlight: appState.topHighlightIDs.contains(entry.point.id),
+                    gameNumber: entry.game.gameNumber,
+                    onToggleDelete: {
+                        appState.setPointReviewStatus(pointID: entry.point.id, status: .deleted)
+                    },
+                    onRate: { rating in
+                        appState.ratePoint(pointID: entry.point.id, rating: rating)
+                    },
+                    onTap: {
+                        onSelectPoint?(entry.point)
+                    }
+                )
             }
         }
     }
@@ -129,7 +212,13 @@ struct PointRow: View {
     var isSelected: Bool = false
     var playheadTime: TimeInterval = 0
     var score: ServeDetector.PointScore?
+    var chip: ReviewChip = .auto
+    var rating: HighlightRating?
+    var highlightScore: Double?
+    var isTopHighlight: Bool = false
+    var gameNumber: Int?
     let onToggleDelete: () -> Void
+    var onRate: ((HighlightRating) -> Void)?
     let onTap: () -> Void
 
     private var progress: Double {
@@ -145,9 +234,9 @@ struct PointRow: View {
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 8) {
-                Text("#\(point.pointNumber)")
+                Text(gameNumber.map { "G\($0)#\(point.pointNumber)" } ?? "#\(point.pointNumber)")
                     .font(.caption).bold()
-                    .frame(width: 30, alignment: .leading)
+                    .frame(width: gameNumber == nil ? 30 : 44, alignment: .leading)
 
                 if let score = score {
                     Text(score.display)
@@ -163,7 +252,38 @@ struct PointRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                if let highlightScore {
+                    HStack(spacing: 2) {
+                        Image(systemName: isTopHighlight ? "star.fill" : "star")
+                            .foregroundStyle(isTopHighlight ? Color.yellow : Color.secondary)
+                        Text(String(format: "%.2f", highlightScore))
+                            .monospacedDigit()
+                    }
+                    .font(.caption2)
+                    .help(isTopHighlight ? "Highlight score — in the current top-K" : "Highlight score")
+                }
+
+                ReviewChipView(chip: chip)
+
                 Spacer()
+
+                if point.reviewStatus != .deleted, let onRate {
+                    Button { onRate(.up) } label: {
+                        Image(systemName: rating == .up ? "hand.thumbsup.fill" : "hand.thumbsup")
+                            .font(.caption2)
+                            .foregroundStyle(rating == .up ? Color.green : Color.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Rate as highlight")
+
+                    Button { onRate(.down) } label: {
+                        Image(systemName: rating == .down ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                            .font(.caption2)
+                            .foregroundStyle(rating == .down ? Color.red : Color.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Rate as not a highlight")
+                }
 
                 Button(action: onToggleDelete) {
                     Image(systemName: point.reviewStatus == .deleted ? "arrow.uturn.backward" : "xmark")
@@ -202,6 +322,31 @@ struct PointRow: View {
         let mins = Int(t) / 60
         let secs = Int(t) % 60
         return String(format: "%d:%02d", mins, secs)
+    }
+}
+
+// MARK: - Review Chip
+
+struct ReviewChipView: View {
+    let chip: ReviewChip
+
+    private var color: Color {
+        switch chip {
+        case .auto: return .gray
+        case .confirmed: return .green
+        case .edited: return .orange
+        case .added: return .blue
+        case .deleted: return .red
+        }
+    }
+
+    var body: some View {
+        Text(chip.rawValue)
+            .font(.system(size: 9, weight: .semibold))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(Capsule().fill(color.opacity(0.18)))
+            .foregroundStyle(color)
     }
 }
 

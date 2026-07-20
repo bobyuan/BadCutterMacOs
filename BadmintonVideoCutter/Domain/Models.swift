@@ -64,6 +64,10 @@ struct VideoAnalysisResult {
     var videoMetadata: VideoMetadata?
     var calibrationFrames: [CalibrationFrame] = []
     var calibrationImages: [UUID: CGImage] = [:]
+    // Session persistence (corrections ledger)
+    var sessionBaseline: SessionBaseline?
+    var sessionEvents: [SessionEvent] = []
+    var audioSignals: AudioSignals = AudioSignals()
 }
 
 enum SensitivityPreset: String, CaseIterable, Codable, Identifiable {
@@ -116,6 +120,44 @@ struct AnalysisConfig: Codable {
     var shuttleGapThreshold: Double = 0.3
     var positionDiscontinuityThreshold: Double = 0.3
     var minGapValidationScore: Int = 2
+
+    // MARK: Shuttle-primary segmentation (was hardcoded in HybridSegmenter;
+    // defaults exactly match the previous constants — pinned by the
+    // segmentation + golden test suites)
+
+    /// Fraction of frames that must have a shuttle position to trust the ML signal.
+    var shuttlePositionRateThreshold: Double = 0.10
+    /// Otsu threshold clamp for the bimodal combined-score distribution.
+    var shuttleOtsuClampMin: Double = 0.25
+    var shuttleOtsuClampMax: Double = 0.55
+    /// Combined-score blend weights (presence / flight-motion / motion / audio).
+    var shuttleBlendPresenceWeight: Double = 0.40
+    var shuttleBlendFlightMotionWeight: Double = 0.30
+    var shuttleBlendMotionWeight: Double = 0.20
+    var shuttleBlendAudioWeight: Double = 0.10
+    /// Post-processing constants in shuttle-primary mode.
+    var shuttleMergeGap: TimeInterval = 0.5
+    var shuttleMinBreak: TimeInterval = 1.5
+    var shuttlePreRollSeconds: TimeInterval = 0.5
+    var shuttlePostRollSeconds: TimeInterval = 0.5
+    var shuttleMaxRallyDuration: TimeInterval = 15.0
+    /// Rally fragments shorter than this are absorbed into breaks.
+    var shuttleMinRallyAbsorb: TimeInterval = 3.0
+    /// Final cleanup merge gap after fragment absorption.
+    var finalMergeGap: TimeInterval = 2.0
+
+    // Dip detection inside splitLongRallies: combined-score weights and the
+    // duration-scaled sensitivity ladder (longer rallies split more eagerly).
+    var dipPresenceWeight: Double = 0.35
+    var dipFlightMotionWeight: Double = 0.30
+    var dipMotionWeight: Double = 0.20
+    var dipAudioWeight: Double = 0.15
+    var dipThresholdStandard: Double = 0.50        // 15–20s rallies
+    var dipMinDurationStandard: TimeInterval = 1.5
+    var dipThresholdMedium: Double = 0.55          // 20–30s
+    var dipMinDurationMedium: TimeInterval = 1.2
+    var dipThresholdLong: Double = 0.60            // 30s+
+    var dipMinDurationLong: TimeInterval = 1.0
 }
 
 // MARK: - Point Review & Game Structure
@@ -124,6 +166,22 @@ enum PointReviewStatus: String, Codable, CaseIterable {
     case confirmed
     case deleted
     case unreviewed
+}
+
+/// 👍/👎 highlight rating; persisted as `highlightRated` ledger events.
+enum HighlightRating: String, Codable {
+    case up
+    case down
+}
+
+/// Derived review state shown as a chip in the point list. `added` and
+/// `edited` are ledger facts, not stored on the point.
+enum ReviewChip: String {
+    case auto
+    case confirmed
+    case edited
+    case added
+    case deleted
 }
 
 struct GamePoint: Identifiable, Codable, Equatable {
@@ -392,14 +450,6 @@ struct RemovalStatistics {
 
 // MARK: - Export Configuration
 
-enum ExportMode: String, CaseIterable, Identifiable {
-    case singleTrimmed = "Single Trimmed Video"
-    case individualRallies = "Individual Rally Clips"
-    case both = "Both"
-
-    var id: String { rawValue }
-}
-
 enum TransitionStyle: String, CaseIterable, Identifiable {
     case cut = "Hard Cut"
     case crossfade = "Crossfade"
@@ -407,10 +457,37 @@ enum TransitionStyle: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-struct ExportConfig {
-    var mode: ExportMode = .singleTrimmed
-    var transition: TransitionStyle = .cut
+/// How the highlight reel picks its points (DESIGN §3.3).
+enum HighlightSelection: Equatable {
+    case topPercent(Double)
+    case topMinutes(Double)
+    case threshold(Double)
+}
+
+/// Export is a set of selection policies, not a mode (DESIGN §3.3).
+struct ExportPlan {
+    enum Reel: String, CaseIterable, Identifiable {
+        case scoring        // all active points
+        case highlights     // best points by highlight score
+
+        var id: String { rawValue }
+    }
+
+    var reels: Set<Reel> = [.scoring]
+    var highlightSelection: HighlightSelection = .topPercent(20)
+    var individualClips: Bool = false
+    var scoreOverlay: Bool = false          // v2.1
+    var transition: TransitionStyle = .cut  // .crossfade v2.1
     var matchSourceFormat: Bool = true
+}
+
+/// One rendered export: a reel or an individual clip.
+struct ExportOutput: Identifiable {
+    let id = UUID()
+    var label: String
+    var url: URL
+    var duration: TimeInterval
+    var fileSize: Int64
 }
 
 // MARK: - Shuttlecock Calibration

@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import SwiftUI
+import CoreML
 
 @MainActor
 final class AppState: ObservableObject {
@@ -25,9 +26,24 @@ final class AppState: ObservableObject {
     @Published var sensitivity: SensitivityPreset = .aggressive
     @Published var isAnalyzing = false
 
+    // MARK: - Audio Signals (Phase 8: vDSP onsets + cheer timeline)
+    @Published var audioSignals = AudioSignals()
+
     // MARK: - Serve & Score State
     @Published var serveSides: [UUID: ServeDetector.ServeSide] = [:]
     @Published var pointScores: [UUID: ServeDetector.PointScore] = [:]
+
+    // MARK: - Highlight State
+    @Published var highlightScores: [UUID: Double] = [:]
+    @Published var highlightTopK: Int = 10
+
+    /// The top-K active points by highlight score.
+    var topHighlightIDs: Set<UUID> {
+        let ranked = games.flatMap(\.points)
+            .filter { $0.reviewStatus != .deleted }
+            .sorted { (highlightScores[$0.id] ?? 0) > (highlightScores[$1.id] ?? 0) }
+        return Set(ranked.prefix(highlightTopK).map(\.id))
+    }
 
     // MARK: - Calibration State
     @Published var calibrationFrames: [CalibrationFrame] = []
@@ -37,18 +53,28 @@ final class AppState: ObservableObject {
     // MARK: - Hit Model State
     @Published var hitModelStatus: HitModelStatus = .notTrained
     @Published var useHitModel: Bool = true
+    @Published var hitModelVersions: [ModelVersionMetadata] = []
+    let hitModelRegistry = ModelRegistry(modelName: "hit_classifier")
+
+    // MARK: - Highlight Ranker State
+    @Published var rankerVersions: [ModelVersionMetadata] = []
+    @Published var rankerRatingCount = 0
+    @Published var isTrainingRanker = false
+    let rankerRegistry = ModelRegistry(modelName: HighlightRanker.modelName)
+    private var rankerModel: MLModel?
+    private var rankerModelVersion: Int?
 
     // MARK: - Training Pool State
     @Published var trainingPoolStatus: TrainingPoolStatus = .empty
     @Published var trainingPoolManifest: TrainingDataManifest = TrainingDataManifest()
 
     var hitModelExists: Bool {
-        FileManager.default.fileExists(atPath: hitModelOutputURL.path)
+        hitModelRegistry.currentModelURL() != nil
     }
 
     var hitModelURL: URL? {
         guard useHitModel else { return nil }
-        return hitModelExists ? hitModelOutputURL : nil
+        return hitModelRegistry.currentModelURL()
     }
 
     /// URL for the TrackNetV3 shuttlecock detection CoreML model.
@@ -80,7 +106,8 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Export State
-    @Published var exportConfig = ExportConfig()
+    @Published var exportPlan = ExportPlan()
+    @Published var exportOutputs: [ExportOutput] = []
     @Published var isExporting = false
 
     // MARK: - UI State
@@ -88,14 +115,139 @@ final class AppState: ObservableObject {
     @Published var lastErrorMessage: String?
     @Published var isShowingFileImporter = false
 
+    // MARK: - Session (Corrections Ledger) State
+    @Published var canUndo = false
+    @Published var canRedo = false
+    /// Points inserted by the user (effective `pointAdded` corrections).
+    @Published var addedPointIDs: Set<UUID> = []
+    /// Points whose boundaries were adjusted (effective `boundaryChanged` corrections).
+    @Published var editedPointIDs: Set<UUID> = []
+    /// Latest 👍/👎 per point, derived from `highlightRated` events.
+    @Published var pointRatings: [UUID: HighlightRating] = [:]
+    private var sessionBaseline: SessionBaseline?
+    private var sessionEvents: [SessionEvent] = []
+    private let sessionStore = SessionStore.shared
+
     private let exporter = VideoExporter()
 
     init() {
-        // Check if a trained model already exists
-        if FileManager.default.fileExists(atPath: hitModelOutputURL.path) {
-            hitModelStatus = .trained(accuracy: 0, clipCount: 0)
+        // Adopt a pre-registry model file as v001, then reflect registry state.
+        hitModelRegistry.migrateLegacyModel(at: hitModelOutputURL)
+        refreshHitModelVersions()
+        if let current = hitModelRegistry.currentVersion(),
+           let meta = hitModelRegistry.metadata(forVersion: current) {
+            hitModelStatus = .trained(accuracy: meta.trainingAccuracy, clipCount: meta.clipCount)
         }
         refreshTrainingPool()
+        rankerVersions = rankerRegistry.versions()
+        refreshRankerRatingCount()
+    }
+
+    func refreshHitModelVersions() {
+        hitModelVersions = hitModelRegistry.versions()
+    }
+
+    // MARK: - Highlight Ranker
+
+    func refreshRankerState() {
+        rankerVersions = rankerRegistry.versions()
+        // Invalidate the cached model when the pointer moved.
+        if rankerModelVersion != rankerRegistry.currentVersion() {
+            rankerModel = nil
+            rankerModelVersion = nil
+        }
+        refreshHighlightScores()
+    }
+
+    /// Recount ratings across all sessions (cheap file scan, off-main).
+    func refreshRankerRatingCount() {
+        let store = sessionStore
+        let root = store.root
+        Task {
+            let count = await Task.detached {
+                HighlightRanker.collectSamples(store: store, sessionsRoot: root).count
+            }.value
+            rankerRatingCount = count
+        }
+    }
+
+    func trainHighlightRanker() {
+        isTrainingRanker = true
+        statusMessage = "Training highlight ranker…"
+        let store = sessionStore
+        let root = store.root
+
+        Task {
+            do {
+                let samples = await Task.detached {
+                    HighlightRanker.collectSamples(store: store, sessionsRoot: root)
+                }.value
+                rankerRatingCount = samples.count
+
+                let candidateURL = hitModelOutputURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("candidate_highlight_ranker.mlmodelc")
+                let concordance = try await HighlightRanker.train(samples: samples, outputModelURL: candidateURL)
+
+                var meta = try rankerRegistry.addVersion(
+                    compiledModelAt: candidateURL,
+                    clipCount: samples.count,
+                    trainingAccuracy: concordance,
+                    notes: "\(samples.count) ratings"
+                )
+
+                // Same gate shape as the hit model: concordance must not regress.
+                let currentMeta = rankerRegistry.currentVersion()
+                    .flatMap { rankerRegistry.metadata(forVersion: $0) }
+                let decision: ShadowEval.GateDecision
+                if let current = currentMeta, current.trainingAccuracy > 0,
+                   concordance < current.trainingAccuracy - 0.02 {
+                    decision = ShadowEval.GateDecision(
+                        promote: false,
+                        reason: String(format: "Concordance regressed: %.2f vs current %.2f.", concordance, current.trainingAccuracy)
+                    )
+                } else {
+                    decision = ShadowEval.GateDecision(
+                        promote: true,
+                        reason: String(format: "Concordance %.2f over %d ratings.", concordance, samples.count)
+                    )
+                }
+                meta.gateDecision = decision
+                try? rankerRegistry.save(meta)
+
+                if decision.promote {
+                    rankerRegistry.promote(version: meta.version)
+                    statusMessage = "Ranker \(meta.versionLabel) trained and promoted — \(decision.reason)"
+                } else {
+                    statusMessage = "Ranker \(meta.versionLabel) trained but NOT promoted — \(decision.reason)"
+                }
+                refreshRankerState()
+            } catch {
+                lastErrorMessage = error.localizedDescription
+            }
+            isTrainingRanker = false
+        }
+    }
+
+    func promoteRanker(version: Int) {
+        rankerRegistry.promote(version: version)
+        refreshRankerState()
+        statusMessage = String(format: "Now ranking highlights with v%03d.", version)
+    }
+
+    func deleteRanker() {
+        rankerRegistry.removeAll()
+        refreshRankerState()
+        statusMessage = "Highlight ranker deleted — back to the built-in heuristic."
+    }
+
+    /// The promoted ranker model, loaded lazily and cached per version.
+    private func loadedRankerModel() -> MLModel? {
+        guard let version = rankerRegistry.currentVersion() else { return nil }
+        if rankerModelVersion == version, let rankerModel { return rankerModel }
+        rankerModel = HighlightRanker.loadModel(at: rankerRegistry.modelURL(forVersion: version))
+        rankerModelVersion = rankerModel != nil ? version : nil
+        return rankerModel
     }
 
     // MARK: - Computed Properties
@@ -201,7 +353,10 @@ final class AppState: ObservableObject {
             analysisProgress: analysisProgress,
             videoMetadata: videoMetadata,
             calibrationFrames: calibrationFrames,
-            calibrationImages: calibrationImages
+            calibrationImages: calibrationImages,
+            sessionBaseline: sessionBaseline,
+            sessionEvents: sessionEvents,
+            audioSignals: audioSignals
         )
     }
 
@@ -219,6 +374,11 @@ final class AppState: ObservableObject {
             calibrationFrames = result.calibrationFrames
             selectedCalibrationFrameID = result.calibrationFrames.first?.id
             calibrationImages = result.calibrationImages
+            sessionBaseline = result.sessionBaseline
+            sessionEvents = result.sessionEvents
+            audioSignals = result.audioSignals
+            refreshSessionDerivedState()
+            refreshHighlightScores()
         } else {
             segments = []
             trimSegments = []
@@ -233,7 +393,67 @@ final class AppState: ObservableObject {
             selectedCalibrationFrameID = nil
             calibrationImages = [:]
             calibrationSessionID = ""
+            sessionBaseline = nil
+            sessionEvents = []
+            audioSignals = AudioSignals()
+            refreshSessionDerivedState()
+
+            // No in-memory state — try restoring a persisted session from disk.
+            restoreSessionFromDisk(for: url)
         }
+    }
+
+    /// Restore a previously analyzed video's state from its persisted session
+    /// (baseline + correction-event replay + cached feature frames).
+    private func restoreSessionFromDisk(for url: URL) {
+        guard let loaded = sessionStore.loadSession(for: url),
+              !loaded.baseline.games.isEmpty else { return }
+
+        sessionBaseline = loaded.baseline
+        sessionEvents = loaded.events
+        segments = loaded.baseline.segments
+        featureFrames = loaded.frames
+        audioSignals = loaded.audioSignals ?? AudioSignals()
+        serveSides = loaded.baseline.serveSides
+
+        let effective = SessionMaterializer.effectiveCorrections(from: loaded.events)
+        games = SessionMaterializer.apply(events: effective, to: loaded.baseline.games)
+
+        deriveTrimSegments()
+        computeAllScores()
+        refreshSessionDerivedState()
+
+        let pointCount = games.reduce(0) { $0 + $1.activePointCount }
+        analysisProgress = AnalysisProgress(
+            stage: .complete,
+            audioProgress: 1.0,
+            videoProgress: 1.0,
+            ralliesFound: pointCount
+        )
+        statusMessage = "Restored previous session: \(pointCount) points"
+
+        // Mirror into the in-memory cache so status dots show "done"
+        saveCurrentVideoStateSnapshot(for: url)
+    }
+
+    private func saveCurrentVideoStateSnapshot(for url: URL) {
+        videoResults[url] = VideoAnalysisResult(
+            status: .done,
+            segments: segments,
+            trimSegments: trimSegments,
+            games: games,
+            featureFrames: featureFrames,
+            racketHits: racketHits,
+            serveSides: serveSides,
+            pointScores: pointScores,
+            analysisProgress: analysisProgress,
+            videoMetadata: videoMetadata,
+            calibrationFrames: calibrationFrames,
+            calibrationImages: calibrationImages,
+            sessionBaseline: sessionBaseline,
+            sessionEvents: sessionEvents,
+            audioSignals: audioSignals
+        )
     }
 
     func removeVideo(id: UUID) {
@@ -417,6 +637,9 @@ final class AppState: ObservableObject {
                 let frames = try await extractor.extractFeatures(from: url, mlModelURL: hitModelURL, progress: callbacks, shuttlecockModelURL: shuttlecockModelURL)
                 self.featureFrames = frames
 
+                statusMessage = "Analyzing audio (onsets + crowd)..."
+                self.audioSignals = await AudioSignalExtractor.extract(from: url)
+
                 analysisProgress.stage = .finalizing
                 let classifier = HybridSegmenter()
                 let rawSegments = classifier.classify(frames: frames, config: config)
@@ -428,6 +651,7 @@ final class AppState: ObservableObject {
 
                 deriveGameStructure()
                 deriveTrimSegments()
+                refreshHighlightScores()
                 detectServesAndScores()
 
                 let rallyCount = refined.filter { $0.label == .rally }.count
@@ -444,6 +668,9 @@ final class AppState: ObservableObject {
                 let gameCount = games.count
                 statusMessage = "Analysis complete\(mlStatus): \(rallyCount) points in \(gameCount) game\(gameCount == 1 ? "" : "s") (\(formatElapsed(elapsed)))"
 
+                // Persist the analysis as the session baseline (corrections ledger)
+                persistBaseline(for: analyzingURL)
+                sessionStore.saveAudioSignals(audioSignals, for: analyzingURL)
                 // Save results for this video
                 saveCurrentVideoState()
                 // If user navigated away during analysis, update the result for the analyzed URL
@@ -490,9 +717,156 @@ final class AppState: ObservableObject {
                 games[gameIdx].points[pointIdx].reviewStatus = status
                 deriveTrimSegments()
                 computeAllScores()
+                recordEvent(status == .deleted ? .pointDeleted(pointID: pointID) : .pointRestored(pointID: pointID))
                 return
             }
         }
+    }
+
+    // MARK: - Session Ledger
+
+    /// Append an event to the current video's ledger (in memory + on disk).
+    private func recordEvent(_ event: SessionEvent) {
+        guard let url = currentAssetURL else { return }
+        sessionEvents.append(event)
+        sessionStore.append(event, for: url)
+        refreshSessionDerivedState()
+    }
+
+    private func refreshSessionDerivedState() {
+        let counts = SessionMaterializer.undoRedoCounts(from: sessionEvents)
+        canUndo = counts.undoable > 0
+        canRedo = counts.redoable > 0
+
+        var added: Set<UUID> = []
+        var edited: Set<UUID> = []
+        for event in SessionMaterializer.effectiveCorrections(from: sessionEvents) {
+            switch event {
+            case .pointAdded(let pointID, _, _):
+                added.insert(pointID)
+            case .boundaryChanged(let pointID, _, _, _):
+                edited.insert(pointID)
+            default:
+                break
+            }
+        }
+        addedPointIDs = added
+        editedPointIDs = edited
+
+        // Ratings are audit events, not corrections: last one per point wins,
+        // and undo/redo never touches them.
+        var ratings: [UUID: HighlightRating] = [:]
+        for event in sessionEvents {
+            if case .highlightRated(let pointID, let raw) = event {
+                if let rating = HighlightRating(rawValue: raw) {
+                    ratings[pointID] = rating
+                } else {
+                    ratings.removeValue(forKey: pointID)
+                }
+            }
+        }
+        pointRatings = ratings
+    }
+
+    /// Derived review state for the point-list chip.
+    func reviewChip(for point: GamePoint) -> ReviewChip {
+        if point.reviewStatus == .deleted { return .deleted }
+        if addedPointIDs.contains(point.id) { return .added }
+        if editedPointIDs.contains(point.id) { return .edited }
+        if point.reviewStatus == .confirmed || pointRatings[point.id] != nil { return .confirmed }
+        return .auto
+    }
+
+    /// Whether add-point is possible (an analysis baseline exists to correct).
+    var canAddPoint: Bool {
+        sessionBaseline != nil
+    }
+
+    /// Insert a user-added point at the playhead (DESIGN §3.2). Span defaults
+    /// to the surrounding break's high-audio window, else ±4s; boundaries stay
+    /// draggable afterwards. Recorded as an undoable `pointAdded` correction,
+    /// so it flows into scoring, export, and training-clip extraction like any
+    /// other active point.
+    @discardableResult
+    func addPoint(at time: TimeInterval) -> UUID? {
+        guard sessionBaseline != nil else {
+            lastErrorMessage = "Analyze the video before adding points."
+            return nil
+        }
+        let activeSegments = games.flatMap(\.points)
+            .filter { $0.reviewStatus != .deleted }
+            .map(\.rallySegment)
+        let duration = videoMetadata?.duration
+            ?? sessionBaseline?.videoDuration
+            ?? max(featureFrames.last?.timestamp ?? 0, time + 4)
+        let span = SegmentUtils.defaultAddedPointSpan(
+            playhead: time,
+            frames: featureFrames,
+            activeSegments: activeSegments,
+            videoDuration: duration
+        )
+        let pointID = UUID()
+        recordEvent(.pointAdded(pointID: pointID, start: span.start, end: span.end))
+        rematerializeFromSession()
+        statusMessage = String(format: "Added point %.1fs – %.1fs — drag the handles to adjust", span.start, span.end)
+        return pointID
+    }
+
+    /// Toggle a 👍/👎 highlight rating; tapping the active rating clears it
+    /// (recorded as rating "none").
+    func ratePoint(pointID: UUID, rating: HighlightRating) {
+        let raw = pointRatings[pointID] == rating ? "none" : rating.rawValue
+        recordEvent(.highlightRated(pointID: pointID, rating: raw))
+    }
+
+    /// Look up a point across all games.
+    func point(withID id: UUID) -> GamePoint? {
+        games.flatMap(\.points).first { $0.id == id }
+    }
+
+    /// Record a completed boundary drag as a ledger event. The live mutation
+    /// already happened via updatePointBoundary during the drag; this logs the
+    /// net change (drag start → drag end) for undo and training.
+    func commitPointBoundary(pointID: UUID, edge: BoundaryEdge, from: TimeInterval, to: TimeInterval) {
+        guard abs(from - to) > 0.01 else { return }
+        recordEvent(.boundaryChanged(pointID: pointID, edge: edge, from: from, to: to))
+        refreshHighlightScores()
+    }
+
+    func undo() {
+        guard canUndo else { return }
+        recordEvent(.undo)
+        rematerializeFromSession()
+    }
+
+    func redo() {
+        guard canRedo else { return }
+        recordEvent(.redo)
+        rematerializeFromSession()
+    }
+
+    /// Rebuild games from baseline + effective corrections (after undo/redo).
+    private func rematerializeFromSession() {
+        guard let baseline = sessionBaseline else { return }
+        let effective = SessionMaterializer.effectiveCorrections(from: sessionEvents)
+        games = SessionMaterializer.apply(events: effective, to: baseline.games)
+        deriveTrimSegments()
+        computeAllScores()
+    }
+
+    /// Persist a fresh analysis result as the session baseline.
+    private func persistBaseline(for url: URL) {
+        sessionBaseline = sessionStore.saveBaseline(
+            segments: segments,
+            games: games,
+            serveSides: serveSides,
+            videoDuration: videoMetadata?.duration,
+            frames: featureFrames,
+            usedHitModel: hitModelURL != nil,
+            for: url
+        )
+        sessionEvents = []
+        refreshSessionDerivedState()
     }
 
     // MARK: - Serve Detection & Scoring
@@ -505,6 +879,14 @@ final class AppState: ObservableObject {
             let sides = await ServeDetector.detectServes(videoURL: url, points: allPoints)
             self.serveSides = sides
             computeAllScores()
+
+            // Serve detection finishes after the baseline is saved — fold the
+            // sides into the persisted baseline so restored sessions have them.
+            if var baseline = sessionBaseline {
+                baseline.serveSides = sides
+                sessionBaseline = baseline
+                sessionStore.rewriteBaseline(baseline, for: url)
+            }
         }
     }
 
@@ -530,6 +912,30 @@ final class AppState: ObservableObject {
         }
 
         pointScores = allScores
+        refreshHighlightScores()
+    }
+
+    /// Recompute highlight scores for the active points: the promoted personal
+    /// ranker when one exists, else the built-in heuristic weights.
+    func refreshHighlightScores() {
+        let activePoints = games.flatMap(\.points).filter { $0.reviewStatus != .deleted }
+        var base: [UUID: Double]?
+        if let model = loadedRankerModel() {
+            let vectors = HighlightScorer.percentileFeatureVectors(points: activePoints, frames: featureFrames, onsets: audioSignals.onsets)
+            var scores: [UUID: Double] = [:]
+            var failed = false
+            for (id, vector) in vectors {
+                if let score = HighlightRanker.predict(model: model, features: vector) {
+                    scores[id] = score
+                } else {
+                    failed = true
+                    break
+                }
+            }
+            if !failed { base = scores }
+        }
+        let resolved = base ?? HighlightScorer.scores(points: activePoints, frames: featureFrames, onsets: audioSignals.onsets)
+        highlightScores = HighlightScorer.applyingCheer(to: resolved, points: activePoints, timeline: audioSignals.cheer)
     }
 
     // MARK: - Trim Segments
@@ -542,7 +948,7 @@ final class AppState: ObservableObject {
                 .map(\.rallySegment)
                 .sorted { $0.start < $1.start }
 
-            let totalDuration = videoMetadata?.duration ?? activeSegments.last?.end ?? 0
+            let totalDuration = videoMetadata?.duration ?? sessionBaseline?.videoDuration ?? activeSegments.last?.end ?? 0
             var trims: [TrimSegment] = []
 
             for i in 0..<activeSegments.count {
@@ -899,6 +1305,9 @@ final class AppState: ObservableObject {
                 let frames = try await extractor.extractFeatures(from: url, mlModelURL: hitModelURL, progress: callbacks, calibrationPriors: priors, shuttlecockModelURL: shuttlecockModelURL)
                 self.featureFrames = frames
 
+                statusMessage = "Analyzing audio (onsets + crowd)..."
+                self.audioSignals = await AudioSignalExtractor.extract(from: url)
+
                 analysisProgress.stage = .finalizing
                 let classifier = HybridSegmenter()
                 let rawSegments = classifier.classify(frames: frames, config: config)
@@ -910,6 +1319,7 @@ final class AppState: ObservableObject {
 
                 deriveGameStructure()
                 deriveTrimSegments()
+                refreshHighlightScores()
                 detectServesAndScores()
 
                 let rallyCount = refined.filter { $0.label == .rally }.count
@@ -925,6 +1335,11 @@ final class AppState: ObservableObject {
                 )
                 let gameCount = games.count
                 statusMessage = "Calibrated re-analysis complete\(mlStatus): \(rallyCount) points in \(gameCount) game\(gameCount == 1 ? "" : "s") (\(formatElapsed(elapsed)))"
+
+                // Persist the re-analysis as the new session baseline
+                persistBaseline(for: url)
+                sessionStore.saveAudioSignals(audioSignals, for: url)
+                saveCurrentVideoState()
             } catch {
                 lastErrorMessage = error.localizedDescription
             }
@@ -987,6 +1402,7 @@ final class AppState: ObservableObject {
                 )
                 refreshTrainingPool()
                 statusMessage = "Saved \(entry.rallyClipCount) rally + \(entry.backgroundClipCount) background clips from \(entry.videoFileName)"
+                recordEvent(.savedToPool(rallyClips: entry.rallyClipCount, backgroundClips: entry.backgroundClipCount))
             } catch {
                 refreshTrainingPool()
                 lastErrorMessage = error.localizedDescription
@@ -999,16 +1415,60 @@ final class AppState: ObservableObject {
 
         Task {
             do {
+                // Train to a scratch location; the registry owns the file after addVersion.
+                let candidateURL = hitModelOutputURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("candidate_hit_classifier.mlmodelc")
+                try? FileManager.default.removeItem(at: candidateURL)
+
                 let result = try await HitModelTrainer.trainFromPool(
-                    outputModelURL: hitModelOutputURL,
+                    outputModelURL: candidateURL,
                     progress: { [weak self] msg in
                         Task { @MainActor [weak self] in
                             self?.hitModelStatus = .training(progress: msg)
                         }
                     }
                 )
-                hitModelStatus = .trained(accuracy: result.accuracy, clipCount: result.clipCount)
-                statusMessage = String(format: "Model trained: %.0f%% accuracy from %d clips", result.accuracy * 100, result.clipCount)
+
+                var meta = try hitModelRegistry.addVersion(
+                    compiledModelAt: candidateURL,
+                    clipCount: result.clipCount,
+                    trainingAccuracy: result.accuracy
+                )
+
+                // Shadow eval: replay every corrected session's cached frames
+                // and score against the user's corrections (DESIGN §3.5).
+                hitModelStatus = .training(progress: "Shadow-evaluating against corrected sessions…")
+                let config = AnalysisConfig(
+                    rallyPercentile: sensitivity.rallyPercentile,
+                    motionWeight: sensitivity.motionWeight,
+                    audioWeight: sensitivity.audioWeight
+                )
+                let store = sessionStore
+                let sessionsRoot = store.root
+                let candidateMetrics = await Task.detached {
+                    ShadowEvaluator.evaluateCorpus(store: store, sessionsRoot: sessionsRoot, config: config)
+                }.value
+
+                let currentMeta = hitModelRegistry.currentVersion()
+                    .flatMap { hitModelRegistry.metadata(forVersion: $0) }
+                let decision = ShadowEval.gate(candidate: candidateMetrics, current: currentMeta?.shadowEval)
+                meta.shadowEval = candidateMetrics
+                meta.gateDecision = decision
+                try? hitModelRegistry.save(meta)
+
+                if decision.promote {
+                    hitModelRegistry.promote(version: meta.version)
+                    hitModelStatus = .trained(accuracy: result.accuracy, clipCount: result.clipCount)
+                    statusMessage = "\(meta.versionLabel) trained and promoted — \(decision.reason)"
+                } else if let currentMeta {
+                    hitModelStatus = .trained(accuracy: currentMeta.trainingAccuracy, clipCount: currentMeta.clipCount)
+                    statusMessage = "\(meta.versionLabel) trained but NOT promoted — \(decision.reason)"
+                } else {
+                    hitModelStatus = .notTrained
+                    statusMessage = "\(meta.versionLabel) trained but NOT promoted — \(decision.reason)"
+                }
+                refreshHitModelVersions()
             } catch {
                 hitModelStatus = .failed(error: error.localizedDescription)
                 lastErrorMessage = error.localizedDescription
@@ -1016,10 +1476,22 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Point the pipeline at a specific version (promote a held candidate or
+    /// revert to an older one).
+    func promoteHitModel(version: Int) {
+        hitModelRegistry.promote(version: version)
+        refreshHitModelVersions()
+        if let meta = hitModelRegistry.metadata(forVersion: version) {
+            hitModelStatus = .trained(accuracy: meta.trainingAccuracy, clipCount: meta.clipCount)
+        }
+        statusMessage = String(format: "Now using hit model v%03d. Re-analyze to apply.", version)
+    }
+
     func deleteHitModel() {
-        try? FileManager.default.removeItem(at: hitModelOutputURL)
+        hitModelRegistry.removeAll()
+        refreshHitModelVersions()
         hitModelStatus = .notTrained
-        statusMessage = "Hit detection model deleted."
+        statusMessage = "All hit model versions deleted."
     }
 
     func clearTrainingPool() {
@@ -1030,25 +1502,114 @@ final class AppState: ObservableObject {
 
     // MARK: - Export
 
-    func exportRallyOnly() {
+    /// Active points in chronological order (the scoring-reel selection).
+    var activePoints: [GamePoint] {
+        games.flatMap(\.points)
+            .filter { $0.reviewStatus != .deleted }
+            .sorted { $0.start < $1.start }
+    }
+
+    /// The highlight reel's points under the current plan.
+    var highlightReelPoints: [GamePoint] {
+        HighlightScorer.select(points: activePoints, scores: highlightScores, selection: exportPlan.highlightSelection)
+    }
+
+    /// Build the file list for the current plan. Individual clips cover every
+    /// point that appears in any selected reel.
+    func exportJobs(for url: URL) -> [ExportJob] {
+        let base = url.deletingPathExtension()
+        var jobs: [ExportJob] = []
+
+        let scoringSegments = effectiveKeptSegments
+        let highlights = highlightReelPoints
+        let fade: TimeInterval = exportPlan.transition == .crossfade ? 0.5 : 0
+
+        if exportPlan.reels.contains(.scoring), !scoringSegments.isEmpty {
+            // Score overlay needs per-point alignment; only possible when the
+            // game structure exists (segments == active points' rally segments).
+            let active = activePoints
+            var overlays: [String?]?
+            if exportPlan.scoreOverlay, !active.isEmpty, active.count == scoringSegments.count {
+                overlays = active.map { pointScores[$0.id]?.display }
+            }
+            jobs.append(ExportJob(
+                label: "Scoring reel",
+                outputURL: base.appendingPathExtension("scoring.mov"),
+                segments: scoringSegments,
+                overlayTexts: overlays,
+                crossfade: fade
+            ))
+        }
+        if exportPlan.reels.contains(.highlights), !highlights.isEmpty {
+            jobs.append(ExportJob(
+                label: "Highlight reel",
+                outputURL: base.appendingPathExtension("highlights.mov"),
+                segments: highlights.map(\.rallySegment),
+                crossfade: fade
+            ))
+        }
+        if exportPlan.individualClips {
+            var clipPoints = exportPlan.reels.contains(.scoring) ? activePoints : []
+            if exportPlan.reels.contains(.highlights) {
+                for point in highlights where !clipPoints.contains(where: { $0.id == point.id }) {
+                    clipPoints.append(point)
+                }
+            }
+            let clipsDir = base.appendingPathExtension("clips")
+            let gameByPoint: [UUID: Int] = Dictionary(uniqueKeysWithValues: games.flatMap { game in
+                game.points.map { ($0.id, game.gameNumber) }
+            })
+            for point in clipPoints.sorted(by: { $0.start < $1.start }) {
+                let game = gameByPoint[point.id] ?? 1
+                jobs.append(ExportJob(
+                    label: String(format: "Clip G%d #%02d", game, point.pointNumber),
+                    outputURL: clipsDir.appendingPathComponent(String(format: "G%d_point%02d.mov", game, point.pointNumber)),
+                    segments: [point.rallySegment]
+                ))
+            }
+        }
+        return jobs
+    }
+
+    func runExport() {
         guard let url = currentAssetURL else {
             lastErrorMessage = "Load a video first."
             return
         }
-        let keptSegments = effectiveKeptSegments
-        guard !keptSegments.isEmpty else {
-            lastErrorMessage = "No rally segments found. Run analysis first."
+        let jobs = exportJobs(for: url)
+        guard !jobs.isEmpty else {
+            lastErrorMessage = "Nothing to export — enable a reel and run analysis first."
             return
+        }
+        if exportPlan.individualClips {
+            try? FileManager.default.createDirectory(
+                at: url.deletingPathExtension().appendingPathExtension("clips"),
+                withIntermediateDirectories: true
+            )
         }
 
         isExporting = true
-        statusMessage = "Exporting rally-only video..."
+        exportOutputs = []
+        statusMessage = "Exporting…"
         lastErrorMessage = nil
 
         Task {
             do {
-                let output = try await exporter.exportRallyOnly(assetURL: url, segments: keptSegments)
-                statusMessage = "Exported: \(output.lastPathComponent)"
+                let outputs = try await exporter.run(
+                    jobs: jobs,
+                    assetURL: url,
+                    matchSourceFormat: exportPlan.matchSourceFormat,
+                    onProgress: { [weak self] message in self?.statusMessage = message }
+                )
+                exportOutputs = outputs
+                let reels = outputs.filter { !$0.label.hasPrefix("Clip") }
+                let clipCount = outputs.count - reels.count
+                var parts = reels.map(\.label)
+                if clipCount > 0 { parts.append("\(clipCount) clips") }
+                statusMessage = "Exported \(parts.joined(separator: " + "))"
+                for output in reels {
+                    recordEvent(.exported(output: output.url.lastPathComponent))
+                }
             } catch {
                 lastErrorMessage = error.localizedDescription
             }

@@ -15,35 +15,43 @@
 		461B17FEAE06F9417831C5A8 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0C4A842284009ED183073A /* AppState.swift */; };
 		4DF170D04C5FF1F54531E461 /* HitClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BC836680D0DE302C08726D8 /* HitClassifier.swift */; };
 		5CC3249F1F265E88D6A1744B /* HitModelTrainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6304677A7DE242E484CC7FA /* HitModelTrainer.swift */; };
-		5CC65F506957B93EA825D6EC /* VideosTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C20D289B5654F603E94ADD /* VideosTabView.swift */; };
 		5CC8F05945B3C9D77742DFA8 /* ModelPackageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44452A77F3373C5C02934EAD /* ModelPackageService.swift */; };
 		5CEC09D108C652EB664D8504 /* BasicFeatureExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */; };
 		7F3A61D8E4B925C0A8D2F146 /* ShuttlecockDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4E917A3D62C8F0E5A1B73D9 /* ShuttlecockDetector.swift */; };
-		5D9270847D01195C7E0987BA /* TimelineViewPlaceholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3709A2A02ADB2BAA0165B464 /* TimelineViewPlaceholder.swift */; };
 		7A3925F71EC5B1F79805679B /* BadmintonVideoCutterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C29DB557E601829A44CF1A85 /* BadmintonVideoCutterApp.swift */; };
 		80B054321EC6A50E5240CFDF /* PointListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 738158B2DFF9E1B1696E9C94 /* PointListView.swift */; };
 		8681FA1418EC0EC076ABE095 /* CalibrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5F112338C862B9F2F8A11AA /* CalibrationView.swift */; };
-		8E8595DD1480ECECF403ADF9 /* TimelineTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E66F052903E72C8891D7555D /* TimelineTabView.swift */; };
+		8E8595DD1480ECECF403ADF9 /* PlayerTimelinePane.swift in Sources */ = {isa = PBXBuildFile; fileRef = E66F052903E72C8891D7555D /* PlayerTimelinePane.swift */; };
 		94C4A7DEAC0442730297BB4C /* SegmentUtilsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB2C787EE892C2DD3A4BB3AB /* SegmentUtilsTests.swift */; };
 		9A4F95E5F49866CD7329F193 /* AnalysisPipelineImpl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38C08605E790A4BDAAB0E0A6 /* AnalysisPipelineImpl.swift */; };
 		9D16CA8A2C5594DC9869F993 /* VideoExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBBDD2F3960CFF8793CC518F /* VideoExporter.swift */; };
 		9E09384924A0D1CF7334B335 /* FeatureExtractorStub.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130FCCF3CFD4028AA5743646 /* FeatureExtractorStub.swift */; };
 		9E68F64006AB97CB759D005D /* ServeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE014B1EC6003E8BF9511DCF /* ServeDetector.swift */; };
 		A28A73F726CF374EE5A9F60F /* SegmentUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D8E460318F1628E5D79E87 /* SegmentUtils.swift */; };
-		A28E355795F236826450CEB5 /* ContentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B4B1CB0408ED4EB709EBEE1 /* ContentViewModel.swift */; };
 		A428E005B8B038A540B94411 /* VideoImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB59F9E1011165EBB9D6991F /* VideoImporter.swift */; };
 		BF30AA0612CF606C78F2567C /* GameDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA70BA0C88B15F75F25CB68 /* GameDetector.swift */; };
 		C4A2EC6CA9A36286981883AF /* VideoPlayerPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B5A6B029900FB0A518C78A /* VideoPlayerPane.swift */; };
 		C5319294A168FCB7B15C7A7B /* ModelManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D714636820FFCF947786C2A /* ModelManifest.swift */; };
-		D6C230CBBDF6C4E87754EA88 /* RemovalStatsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BE7EE26D012CA27654D4FA8 /* RemovalStatsTabView.swift */; };
 		D8B9C0E1F2A3B4C5D6E7F8A9 /* ShuttlecockDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A8B9D0E1F2A3B4C5D6E7F8 /* ShuttlecockDetectorTests.swift */; };
 		DA23C2E564F4042D81AF775B /* BasicFeatureExtractorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE4430931B9FFC0939EFE86 /* BasicFeatureExtractorTests.swift */; };
 		ED06773894EB74D348455AF8 /* HybridSegmenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */; };
-		FDF11AA1BFD26D240D222501 /* ExportTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0286648C5B3CA2E34F2ADA7 /* ExportTabView.swift */; };
 		B3C4D5E6F7A8B9C0D1E2F3A4 /* TrackNetV3.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* TrackNetV3.mlpackage */; };
 		F4A5B6C7D8E9F0A1B2C3D4E5 /* TrajectoryAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */; };
 		A5B6C7D8E9F0A1B2C3D4E5F6 /* TrajectoryAnalyzerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */; };
 		B1C2D3E4F5A6B7C8D9E0F1A2 /* TrainingPoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */; };
+		BB01AA02CC03DD04EE05FF06 /* SessionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */; };
+		BB01AA02CC03DD04EE05FF20 /* HighlightScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */; };
+		BB01AA02CC03DD04EE05FF22 /* ShadowEval.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF22 /* ShadowEval.swift */; };
+		BB01AA02CC03DD04EE05FF25 /* HighlightRanker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF25 /* HighlightRanker.swift */; };
+		BB01AA02CC03DD04EE05FF26 /* AudioSignalExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF26 /* AudioSignalExtractor.swift */; };
+		BB01AA02CC03DD04EE05FF23 /* ModelRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF23 /* ModelRegistry.swift */; };
+		BB01AA02CC03DD04EE05FF24 /* ShadowEvalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF24 /* ShadowEvalTests.swift */; };
+		BB01AA02CC03DD04EE05FF21 /* HighlightScorerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF21 /* HighlightScorerTests.swift */; };
+		BB01AA02CC03DD04EE05FF07 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF07 /* SessionStore.swift */; };
+		BB01AA02CC03DD04EE05FF08 /* SessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */; };
+		BB01AA02CC03DD04EE05FF10 /* StudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF10 /* StudioView.swift */; };
+		BB01AA02CC03DD04EE05FF11 /* LibraryPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF11 /* LibraryPane.swift */; };
+		BB01AA02CC03DD04EE05FF12 /* InspectorPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB02CC03DD04EE05FF12 /* InspectorPane.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,8 +68,6 @@
 		00D920DBD6827DCD004CDEE2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		1254E9877D0986E05A1CF869 /* BadmintonVideoCutter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BadmintonVideoCutter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		130FCCF3CFD4028AA5743646 /* FeatureExtractorStub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureExtractorStub.swift; sourceTree = "<group>"; };
-		2BE7EE26D012CA27654D4FA8 /* RemovalStatsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemovalStatsTabView.swift; sourceTree = "<group>"; };
-		3709A2A02ADB2BAA0165B464 /* TimelineViewPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineViewPlaceholder.swift; sourceTree = "<group>"; };
 		38C08605E790A4BDAAB0E0A6 /* AnalysisPipelineImpl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisPipelineImpl.swift; sourceTree = "<group>"; };
 		44452A77F3373C5C02934EAD /* ModelPackageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelPackageService.swift; sourceTree = "<group>"; };
 		4E631C17014F8A2AD77CAA9F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -71,24 +77,21 @@
 		7D714636820FFCF947786C2A /* ModelManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManifest.swift; sourceTree = "<group>"; };
 		7EED0ED50CA52374047619D0 /* AudioAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAnalyzer.swift; sourceTree = "<group>"; };
 		86D8E460318F1628E5D79E87 /* SegmentUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentUtils.swift; sourceTree = "<group>"; };
-		8B4B1CB0408ED4EB709EBEE1 /* ContentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentViewModel.swift; sourceTree = "<group>"; };
 		957CDC923188260D7B13CDCA /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		9BC836680D0DE302C08726D8 /* HitClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitClassifier.swift; sourceTree = "<group>"; };
 		9BD050C783FA64A3D9E43626 /* Protocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocols.swift; sourceTree = "<group>"; };
 		A5F112338C862B9F2F8A11AA /* CalibrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalibrationView.swift; sourceTree = "<group>"; };
 		A6304677A7DE242E484CC7FA /* HitModelTrainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitModelTrainer.swift; sourceTree = "<group>"; };
-		B5C20D289B5654F603E94ADD /* VideosTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideosTabView.swift; sourceTree = "<group>"; };
 		C29DB557E601829A44CF1A85 /* BadmintonVideoCutterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BadmintonVideoCutterApp.swift; sourceTree = "<group>"; };
 		C7A8B9D0E1F2A3B4C5D6E7F8 /* ShuttlecockDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShuttlecockDetectorTests.swift; sourceTree = "<group>"; };
 		CB2C787EE892C2DD3A4BB3AB /* SegmentUtilsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentUtilsTests.swift; sourceTree = "<group>"; };
 		B4E917A3D62C8F0E5A1B73D9 /* ShuttlecockDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShuttlecockDetector.swift; sourceTree = "<group>"; };
 		CE014B1EC6003E8BF9511DCF /* ServeDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServeDetector.swift; sourceTree = "<group>"; };
 		CF0C4A842284009ED183073A /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
-		D0286648C5B3CA2E34F2ADA7 /* ExportTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportTabView.swift; sourceTree = "<group>"; };
 		D1B5A6B029900FB0A518C78A /* VideoPlayerPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPlayerPane.swift; sourceTree = "<group>"; };
 		DB59F9E1011165EBB9D6991F /* VideoImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoImporter.swift; sourceTree = "<group>"; };
 		DBBDD2F3960CFF8793CC518F /* VideoExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoExporter.swift; sourceTree = "<group>"; };
-		E66F052903E72C8891D7555D /* TimelineTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineTabView.swift; sourceTree = "<group>"; };
+		E66F052903E72C8891D7555D /* PlayerTimelinePane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerTimelinePane.swift; sourceTree = "<group>"; };
 		E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicFeatureExtractor.swift; sourceTree = "<group>"; };
 		ECA70BA0C88B15F75F25CB68 /* GameDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameDetector.swift; sourceTree = "<group>"; };
 		F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridSegmenterTests.swift; sourceTree = "<group>"; };
@@ -97,6 +100,19 @@
 		D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrajectoryAnalyzer.swift; sourceTree = "<group>"; };
 		E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrajectoryAnalyzerTests.swift; sourceTree = "<group>"; };
 		A2B3C4D5E6F7A8B9C0D1E2F3 /* TrainingPoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingPoolTests.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModels.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightScorer.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF22 /* ShadowEval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShadowEval.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF25 /* HighlightRanker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightRanker.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF26 /* AudioSignalExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSignalExtractor.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF23 /* ModelRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelRegistry.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF24 /* ShadowEvalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShadowEvalTests.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF21 /* HighlightScorerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightScorerTests.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF07 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStoreTests.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF10 /* StudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioView.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF11 /* LibraryPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryPane.swift; sourceTree = "<group>"; };
+		AA01BB02CC03DD04EE05FF12 /* InspectorPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPane.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -113,13 +129,12 @@
 			isa = PBXGroup;
 			children = (
 				A5F112338C862B9F2F8A11AA /* CalibrationView.swift */,
-				D0286648C5B3CA2E34F2ADA7 /* ExportTabView.swift */,
+				AA01BB02CC03DD04EE05FF12 /* InspectorPane.swift */,
+				AA01BB02CC03DD04EE05FF11 /* LibraryPane.swift */,
+				AA01BB02CC03DD04EE05FF10 /* StudioView.swift */,
 				738158B2DFF9E1B1696E9C94 /* PointListView.swift */,
-				2BE7EE26D012CA27654D4FA8 /* RemovalStatsTabView.swift */,
-				E66F052903E72C8891D7555D /* TimelineTabView.swift */,
-				3709A2A02ADB2BAA0165B464 /* TimelineViewPlaceholder.swift */,
+				E66F052903E72C8891D7555D /* PlayerTimelinePane.swift */,
 				D1B5A6B029900FB0A518C78A /* VideoPlayerPane.swift */,
-				B5C20D289B5654F603E94ADD /* VideosTabView.swift */,
 			);
 			path = UIComponents;
 			sourceTree = "<group>";
@@ -130,7 +145,6 @@
 				CF0C4A842284009ED183073A /* AppState.swift */,
 				C29DB557E601829A44CF1A85 /* BadmintonVideoCutterApp.swift */,
 				957CDC923188260D7B13CDCA /* ContentView.swift */,
-				8B4B1CB0408ED4EB709EBEE1 /* ContentViewModel.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -139,8 +153,19 @@
 			isa = PBXGroup;
 			children = (
 				CB2C787EE892C2DD3A4BB3AB /* SegmentUtilsTests.swift */,
+				AA01BB02CC03DD04EE05FF08 /* SessionStoreTests.swift */,
+				AA01BB02CC03DD04EE05FF24 /* ShadowEvalTests.swift */,
 			);
 			path = DomainTests;
+			sourceTree = "<group>";
+		};
+		CC01AA02BB03DD04EE05FF09 /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				AA01BB02CC03DD04EE05FF06 /* SessionModels.swift */,
+				AA01BB02CC03DD04EE05FF07 /* SessionStore.swift */,
+			);
+			path = Persistence;
 			sourceTree = "<group>";
 		};
 		28D4C9C9CE0343A30980480A /* Resources */ = {
@@ -193,6 +218,7 @@
 			isa = PBXGroup;
 			children = (
 				6AE4430931B9FFC0939EFE86 /* BasicFeatureExtractorTests.swift */,
+				AA01BB02CC03DD04EE05FF21 /* HighlightScorerTests.swift */,
 				F523221FBEC5FF9823F8525D /* HybridSegmenterTests.swift */,
 				C7A8B9D0E1F2A3B4C5D6E7F8 /* ShuttlecockDetectorTests.swift */,
 				E3F4A5B6C7D8E9F0A1B2C3D4 /* TrajectoryAnalyzerTests.swift */,
@@ -207,6 +233,7 @@
 				16866753C1B2865DB68B22E7 /* App */,
 				88BEF754AB2D5D7C61006D1D /* Domain */,
 				F1B41CEF3586B9CADDC3D4E9 /* ModelMgmt */,
+				CC01AA02BB03DD04EE05FF09 /* Persistence */,
 				28D4C9C9CE0343A30980480A /* Resources */,
 				CABD3589EE9B69BAAA3CA0E1 /* Segmentation */,
 				1513650780834FCF44BE32A0 /* UIComponents */,
@@ -220,13 +247,17 @@
 			children = (
 				38C08605E790A4BDAAB0E0A6 /* AnalysisPipelineImpl.swift */,
 				7EED0ED50CA52374047619D0 /* AudioAnalyzer.swift */,
+				AA01BB02CC03DD04EE05FF26 /* AudioSignalExtractor.swift */,
 				E737274E046F5F945D530DFC /* BasicFeatureExtractor.swift */,
 				130FCCF3CFD4028AA5743646 /* FeatureExtractorStub.swift */,
 				ECA70BA0C88B15F75F25CB68 /* GameDetector.swift */,
+				AA01BB02CC03DD04EE05FF25 /* HighlightRanker.swift */,
+				AA01BB02CC03DD04EE05FF20 /* HighlightScorer.swift */,
 				9BC836680D0DE302C08726D8 /* HitClassifier.swift */,
 				A6304677A7DE242E484CC7FA /* HitModelTrainer.swift */,
 				F98475C24F5526CF6A45EF14 /* HybridSegmenter.swift */,
 				CE014B1EC6003E8BF9511DCF /* ServeDetector.swift */,
+				AA01BB02CC03DD04EE05FF22 /* ShadowEval.swift */,
 				B4E917A3D62C8F0E5A1B73D9 /* ShuttlecockDetector.swift */,
 				D2E3F4A5B6C7D8E9F0A1B2C3 /* TrajectoryAnalyzer.swift */,
 			);
@@ -238,6 +269,7 @@
 			children = (
 				7D714636820FFCF947786C2A /* ModelManifest.swift */,
 				44452A77F3373C5C02934EAD /* ModelPackageService.swift */,
+				AA01BB02CC03DD04EE05FF23 /* ModelRegistry.swift */,
 			);
 			path = ModelMgmt;
 			sourceTree = "<group>";
@@ -327,8 +359,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				DA23C2E564F4042D81AF775B /* BasicFeatureExtractorTests.swift in Sources */,
+				BB01AA02CC03DD04EE05FF21 /* HighlightScorerTests.swift in Sources */,
 				21BB9C29BC55D238F9AFDE6D /* HybridSegmenterTests.swift in Sources */,
 				94C4A7DEAC0442730297BB4C /* SegmentUtilsTests.swift in Sources */,
+				BB01AA02CC03DD04EE05FF08 /* SessionStoreTests.swift in Sources */,
+				BB01AA02CC03DD04EE05FF24 /* ShadowEvalTests.swift in Sources */,
 				D8B9C0E1F2A3B4C5D6E7F8A9 /* ShuttlecockDetectorTests.swift in Sources */,
 				A5B6C7D8E9F0A1B2C3D4E5F6 /* TrajectoryAnalyzerTests.swift in Sources */,
 				B1C2D3E4F5A6B7C8D9E0F1A2 /* TrainingPoolTests.swift in Sources */,
@@ -340,32 +375,37 @@
 			buildActionMask = 2147483647;
 			files = (
 				9A4F95E5F49866CD7329F193 /* AnalysisPipelineImpl.swift in Sources */,
-				5CC65F506957B93EA825D6EC /* VideosTabView.swift in Sources */,
+				BB01AA02CC03DD04EE05FF10 /* StudioView.swift in Sources */,
+				BB01AA02CC03DD04EE05FF11 /* LibraryPane.swift in Sources */,
+				BB01AA02CC03DD04EE05FF12 /* InspectorPane.swift in Sources */,
 				461B17FEAE06F9417831C5A8 /* AppState.swift in Sources */,
 				05B119B97AA1079F3E163E2E /* AudioAnalyzer.swift in Sources */,
+				BB01AA02CC03DD04EE05FF26 /* AudioSignalExtractor.swift in Sources */,
 				7A3925F71EC5B1F79805679B /* BadmintonVideoCutterApp.swift in Sources */,
 				5CEC09D108C652EB664D8504 /* BasicFeatureExtractor.swift in Sources */,
 				8681FA1418EC0EC076ABE095 /* CalibrationView.swift in Sources */,
 				057C041BB97EB0EC320A1F6C /* ContentView.swift in Sources */,
-				A28E355795F236826450CEB5 /* ContentViewModel.swift in Sources */,
-				FDF11AA1BFD26D240D222501 /* ExportTabView.swift in Sources */,
 				9E09384924A0D1CF7334B335 /* FeatureExtractorStub.swift in Sources */,
 				BF30AA0612CF606C78F2567C /* GameDetector.swift in Sources */,
+				BB01AA02CC03DD04EE05FF25 /* HighlightRanker.swift in Sources */,
+				BB01AA02CC03DD04EE05FF20 /* HighlightScorer.swift in Sources */,
 				4DF170D04C5FF1F54531E461 /* HitClassifier.swift in Sources */,
 				5CC3249F1F265E88D6A1744B /* HitModelTrainer.swift in Sources */,
 				ED06773894EB74D348455AF8 /* HybridSegmenter.swift in Sources */,
 				C5319294A168FCB7B15C7A7B /* ModelManifest.swift in Sources */,
 				5CC8F05945B3C9D77742DFA8 /* ModelPackageService.swift in Sources */,
+				BB01AA02CC03DD04EE05FF23 /* ModelRegistry.swift in Sources */,
+				BB01AA02CC03DD04EE05FF22 /* ShadowEval.swift in Sources */,
 				037DACC7DBB40A439212D1F1 /* Models.swift in Sources */,
 				80B054321EC6A50E5240CFDF /* PointListView.swift in Sources */,
 				43E222E482AA3DC63053D866 /* Protocols.swift in Sources */,
-				D6C230CBBDF6C4E87754EA88 /* RemovalStatsTabView.swift in Sources */,
 				A28A73F726CF374EE5A9F60F /* SegmentUtils.swift in Sources */,
 				9E68F64006AB97CB759D005D /* ServeDetector.swift in Sources */,
+				BB01AA02CC03DD04EE05FF06 /* SessionModels.swift in Sources */,
+				BB01AA02CC03DD04EE05FF07 /* SessionStore.swift in Sources */,
 				7F3A61D8E4B925C0A8D2F146 /* ShuttlecockDetector.swift in Sources */,
 				F4A5B6C7D8E9F0A1B2C3D4E5 /* TrajectoryAnalyzer.swift in Sources */,
-				8E8595DD1480ECECF403ADF9 /* TimelineTabView.swift in Sources */,
-				5D9270847D01195C7E0987BA /* TimelineViewPlaceholder.swift in Sources */,
+				8E8595DD1480ECECF403ADF9 /* PlayerTimelinePane.swift in Sources */,
 				9D16CA8A2C5594DC9869F993 /* VideoExporter.swift in Sources */,
 				A428E005B8B038A540B94411 /* VideoImporter.swift in Sources */,
 				C4A2EC6CA9A36286981883AF /* VideoPlayerPane.swift in Sources */,
