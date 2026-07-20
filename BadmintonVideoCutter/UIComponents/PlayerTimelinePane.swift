@@ -79,7 +79,17 @@ struct PlayerTimelinePane: View {
                         ghostStart: controller.ghostStart,
                         ghostEnd: controller.ghostEnd,
                         splitMode: $controller.splitMode,
-                        onBoundaryAdjusted: { adjusted in previewPoint(adjusted) }
+                        onBoundaryAdjusted: { adjusted, edge in
+                            switch edge {
+                            case .start:
+                                // Judge the new start: replay from it.
+                                previewPoint(adjusted)
+                            case .end:
+                                // Judge the new end: replay just the tail.
+                                controller.selectedPointID = adjusted.id
+                                playWindow(from: max(adjusted.start, adjusted.end - 2.5), to: adjusted.end)
+                            }
+                        }
                     )
                     .frame(height: 60)
                     .background(ScrollWheelHandler { deltaX in scrollViewport(deltaX: deltaX) })
@@ -581,8 +591,8 @@ struct TrimOverlayTimelineView: View {
     var ghostStart: TimeInterval?
     var ghostEnd: TimeInterval?
     @Binding var splitMode: Bool
-    /// Called after a grabber drag commits, with the adjusted point.
-    var onBoundaryAdjusted: ((GamePoint) -> Void)?
+    /// Called after a grabber drag commits, with the adjusted point and edge.
+    var onBoundaryAdjusted: ((GamePoint, BoundaryEdge) -> Void)?
 
     // Boundary-drag tracking for ledger commits (one drag at a time)
     @State private var dragPointID: UUID?
@@ -861,7 +871,7 @@ struct TrimOverlayTimelineView: View {
                         // Replay the play with its adjusted boundaries so the
                         // result can be judged immediately.
                         if let adjusted = appState.point(withID: pointID) {
-                            onBoundaryAdjusted?(adjusted)
+                            onBoundaryAdjusted?(adjusted, edge)
                         }
                         tuneDragOrigin = nil
                         tuneDragNeighborOrigin = nil
