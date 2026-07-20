@@ -77,7 +77,8 @@ struct PlayerTimelinePane: View {
                         playheadTime: $controller.playheadTime,
                         selectedPointID: $controller.selectedPointID,
                         ghostStart: controller.ghostStart,
-                        ghostEnd: controller.ghostEnd
+                        ghostEnd: controller.ghostEnd,
+                        splitMode: $controller.splitMode
                     )
                     .frame(height: 60)
                     .background(ScrollWheelHandler { deltaX in scrollViewport(deltaX: deltaX) })
@@ -201,6 +202,13 @@ struct PlayerTimelinePane: View {
                 switch event.keyCode {
                 case 125: stepSelection(1); return nil    // ↓
                 case 126: stepSelection(-1); return nil   // ↑
+                case 53:                                  // Esc
+                    if controller.splitMode {
+                        controller.splitMode = false
+                        appState.statusMessage = "Split canceled."
+                        return nil
+                    }
+                    return event
                 default: return event
                 }
             }
@@ -569,6 +577,7 @@ struct TrimOverlayTimelineView: View {
     @Binding var selectedPointID: UUID?
     var ghostStart: TimeInterval?
     var ghostEnd: TimeInterval?
+    @Binding var splitMode: Bool
 
     // Boundary-drag tracking for ledger commits (one drag at a time)
     @State private var dragPointID: UUID?
@@ -598,8 +607,9 @@ struct TrimOverlayTimelineView: View {
                         .frame(width: max(1, w), height: height)
                         .offset(x: x)
                         .contextMenu {
-                            Button("Split play at playhead") {
-                                appState.splitPlay(at: playheadTime)
+                            Button("Split play here…") {
+                                splitMode = true
+                                appState.statusMessage = "Split mode — move the mouse to the exact moment, click to split. Esc cancels."
                             }
                         }
                 }
@@ -719,7 +729,7 @@ struct TrimOverlayTimelineView: View {
                     .offset(x: px)
                     .allowsHitTesting(false)
                 Circle()
-                    .fill(Color.white)
+                    .fill(splitMode ? Color.orange : Color.white)
                     .overlay(Circle().stroke(Color.black.opacity(0.4), lineWidth: 1))
                     .frame(width: 13, height: 13)
                     .offset(x: px - 5.5, y: -height / 2 + 7)
@@ -727,12 +737,36 @@ struct TrimOverlayTimelineView: View {
                         DragGesture(minimumDistance: 0, coordinateSpace: .named("trimTimeline"))
                             .onChanged { value in scrubTo(xToTime(value.location.x, width: width)) }
                     )
+
+                // Split-mode tip riding the cursor
+                if splitMode {
+                    HStack(spacing: 4) {
+                        Image(systemName: "scissors")
+                        Text("Click to split · Esc cancels")
+                    }
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.orange))
+                    .foregroundStyle(.black)
+                    .offset(x: px + 10, y: -height / 2 + 9)
+                    .allowsHitTesting(false)
+                }
             }
             .coordinateSpace(name: "trimTimeline")
             .contentShape(Rectangle())
+            .onContinuousHover(coordinateSpace: .named("trimTimeline")) { phase in
+                guard splitMode, case .active(let location) = phase else { return }
+                scrubTo(xToTime(location.x, width: width))
+            }
             .onTapGesture { location in
                 let time = xToTime(location.x, width: width)
-                seekTo(time)
+                if splitMode {
+                    splitMode = false
+                    appState.splitPlay(at: time)
+                } else {
+                    seekTo(time)
+                }
             }
             // Drag anywhere on the strip (not on a handle) to scrub.
             .gesture(

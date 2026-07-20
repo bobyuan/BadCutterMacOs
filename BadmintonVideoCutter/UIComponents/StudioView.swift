@@ -16,6 +16,10 @@ final class TimelineController: ObservableObject {
         }
     }
 
+    /// Split-play mode: the playhead becomes a split cursor that follows the
+    /// mouse; click confirms, Esc cancels.
+    @Published var splitMode = false
+
     // MARK: Point tuning (feedback-driven adjustment)
     @Published var tuningPointID: UUID?
     /// Pre-adjustment boundaries, drawn as ghosts while tuning.
