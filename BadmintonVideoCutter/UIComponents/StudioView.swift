@@ -6,7 +6,15 @@ import SwiftUI
 final class TimelineController: ObservableObject {
     @Published var viewport = TimelineViewport()
     @Published var playheadTime: TimeInterval = 0
-    @Published var selectedPointID: UUID?
+    @Published var selectedPointID: UUID? {
+        didSet {
+            // Selecting a different point drops any stale feedback-tuning
+            // state (ghost boundaries + tune bar) from the previous one.
+            if let tuning = tuningPointID, tuning != selectedPointID {
+                endTuning()
+            }
+        }
+    }
 
     // MARK: Point tuning (feedback-driven adjustment)
     @Published var tuningPointID: UUID?

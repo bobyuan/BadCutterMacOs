@@ -76,8 +76,7 @@ struct PlayerTimelinePane: View {
                         playheadTime: $controller.playheadTime,
                         selectedPointID: $controller.selectedPointID,
                         ghostStart: controller.ghostStart,
-                        ghostEnd: controller.ghostEnd,
-                        tuningPointID: controller.tuningPointID
+                        ghostEnd: controller.ghostEnd
                     )
                     .frame(height: 60)
                     .background(ScrollWheelHandler { deltaX in scrollViewport(deltaX: deltaX) })
@@ -477,7 +476,6 @@ struct TrimOverlayTimelineView: View {
     @Binding var selectedPointID: UUID?
     var ghostStart: TimeInterval?
     var ghostEnd: TimeInterval?
-    var tuningPointID: UUID?
 
     // Boundary-drag tracking for ledger commits (one drag at a time)
     @State private var dragPointID: UUID?
@@ -596,11 +594,14 @@ struct TrimOverlayTimelineView: View {
                         .allowsHitTesting(false)
                 }
 
-                // Tuned-point boundary handles: big, orange, and free to drag
-                // past the current boundary (clamped only by the neighbors).
-                if let tuningID = tuningPointID, let tuned = appState.point(withID: tuningID) {
-                    tuneHandle(edge: .start, pointID: tuningID, time: tuned.start, width: width, height: height)
-                    tuneHandle(edge: .end, pointID: tuningID, time: tuned.end, width: width, height: height)
+                // Selected-point boundary handles: big, orange, always shown for
+                // the current play, and free to drag past the current boundary
+                // (clamped only by the neighbors).
+                if let selectedID = selectedPointID,
+                   let selected = appState.point(withID: selectedID),
+                   selected.reviewStatus != .deleted {
+                    tuneHandle(edge: .start, pointID: selectedID, time: selected.start, width: width, height: height)
+                    tuneHandle(edge: .end, pointID: selectedID, time: selected.end, width: width, height: height)
                 }
 
                 // Playhead + scrub knob
