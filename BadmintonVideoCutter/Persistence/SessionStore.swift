@@ -32,6 +32,7 @@ final class SessionStore {
         /// Events recorded after the baseline was saved, in ledger order.
         var events: [SessionEvent]
         var frames: [FeatureFrame]
+        var audioSignals: AudioSignals?
     }
 
     // MARK: - Encoding
@@ -180,6 +181,15 @@ final class SessionStore {
         return baseline
     }
 
+    /// Persist the per-video audio signals (onsets + cheer timeline).
+    func saveAudioSignals(_ signals: AudioSignals, for url: URL) {
+        guard let dir = sessionDirectory(for: url) else { return }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? Self.ledgerEncoder.encode(signals) {
+            try? data.write(to: dir.appendingPathComponent("audio.json"))
+        }
+    }
+
     /// Overwrite baseline.json in place (e.g. when async serve detection
     /// finishes after the baseline was first saved). Does not touch the ledger.
     func rewriteBaseline(_ baseline: SessionBaseline, for url: URL) {
@@ -212,6 +222,9 @@ final class SessionStore {
             frames = codable.map { $0.toFeatureFrame() }
         }
 
+        let audioSignals = (try? Data(contentsOf: dir.appendingPathComponent("audio.json")))
+            .flatMap { try? Self.decoder.decode(AudioSignals.self, from: $0) }
+
         // Touch lastOpened
         if var meta = try? Self.decoder.decode(SessionMeta.self, from: Data(contentsOf: dir.appendingPathComponent("meta.json"))) {
             meta.lastOpened = Date()
@@ -220,6 +233,6 @@ final class SessionStore {
             }
         }
 
-        return LoadedSession(baseline: baseline, events: events, frames: frames)
+        return LoadedSession(baseline: baseline, events: events, frames: frames, audioSignals: audioSignals)
     }
 }

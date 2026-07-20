@@ -192,6 +192,64 @@ final class HighlightScorerTests: XCTestCase {
         }
     }
 
+    // MARK: - vDSP onset detection (Phase 8)
+
+    /// 5s of near-silence with sharp bursts at 1, 2, 3 and 4 seconds.
+    private func clickTrack(sampleRate: Double = 44100) -> [Float] {
+        var samples = [Float](repeating: 0, count: Int(sampleRate * 5))
+        for i in samples.indices { samples[i] = Float.random(in: -0.002...0.002) }
+        for clickTime in [1.0, 2.0, 3.0, 4.0] {
+            let start = Int(clickTime * sampleRate)
+            for offset in 0..<Int(sampleRate * 0.02) {
+                samples[start + offset] = 0.8 * Float(1.0 - Double(offset) / (sampleRate * 0.02))
+            }
+        }
+        return samples
+    }
+
+    func testOnsetDetectionFindsClicks() {
+        let onsets = AudioSignalExtractor.detectOnsets(samples: clickTrack(), sampleRate: 44100)
+        XCTAssertEqual(onsets.count, 4, "onsets: \(onsets)")
+        for (found, expected) in zip(onsets, [1.0, 2.0, 3.0, 4.0]) {
+            XCTAssertEqual(found, expected, accuracy: 0.05)
+        }
+    }
+
+    func testOnsetDetectionSilentAudioFindsNothing() {
+        let silence = [Float](repeating: 0, count: 44100 * 3)
+        XCTAssertTrue(AudioSignalExtractor.detectOnsets(samples: silence, sampleRate: 44100).isEmpty)
+    }
+
+    func testHitDetectorPrefersPreciseOnsets() {
+        // No trajectory, no high quantized audio — only explicit onsets count.
+        let frames = (0..<120).map { FeatureFrame(timestamp: Double($0) / 30.0, motionScore: 0.2, audioScore: 0.25) }
+        let segment = TimeSegment(start: 0, end: 4, label: .rally, confidence: 1)
+        let hits = HitDetector.detectHits(frames: frames, in: segment, onsets: [0.5, 1.5, 2.5, 9.0])
+        XCTAssertEqual(hits, [0.5, 1.5, 2.5], "onsets outside the segment are ignored")
+    }
+
+    // MARK: - Cheer blending (Phase 8)
+
+    func testCheerBlendBoostsCheeredPoint() {
+        let (points, _) = selectionFixture()  // 4 points, 10s each at 0/20/40/60
+        let base = Dictionary(uniqueKeysWithValues: points.map { ($0.id, 0.5) })
+        // Big cheer right after point 2's end (t=30), quiet elsewhere.
+        let timeline = stride(from: 0.0, to: 75.0, by: 1.0).map {
+            AudioSignals.CheerSample(t: $0, score: abs($0 - 30.5) < 1.5 ? 0.9 : 0.05)
+        }
+        let blended = HighlightScorer.applyingCheer(to: base, points: points, timeline: timeline)
+        let cheered = blended[points[1].id]!
+        for other in points where other.id != points[1].id {
+            XCTAssertGreaterThan(cheered, blended[other.id]!)
+        }
+    }
+
+    func testCheerBlendNoTimelineLeavesScoresUntouched() {
+        let (points, _) = selectionFixture()
+        let base = Dictionary(uniqueKeysWithValues: points.map { ($0.id, Double($0.pointNumber) / 10) })
+        XCTAssertEqual(HighlightScorer.applyingCheer(to: base, points: points, timeline: []), base)
+    }
+
     // MARK: - Golden tests over the 5 cached videos
 
     /// Start times (s) of the top-3 points by highlight score, per video.

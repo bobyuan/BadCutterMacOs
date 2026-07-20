@@ -67,6 +67,7 @@ struct VideoAnalysisResult {
     // Session persistence (corrections ledger)
     var sessionBaseline: SessionBaseline?
     var sessionEvents: [SessionEvent] = []
+    var audioSignals: AudioSignals = AudioSignals()
 }
 
 enum SensitivityPreset: String, CaseIterable, Codable, Identifiable {

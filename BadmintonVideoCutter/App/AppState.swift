@@ -26,6 +26,9 @@ final class AppState: ObservableObject {
     @Published var sensitivity: SensitivityPreset = .aggressive
     @Published var isAnalyzing = false
 
+    // MARK: - Audio Signals (Phase 8: vDSP onsets + cheer timeline)
+    @Published var audioSignals = AudioSignals()
+
     // MARK: - Serve & Score State
     @Published var serveSides: [UUID: ServeDetector.ServeSide] = [:]
     @Published var pointScores: [UUID: ServeDetector.PointScore] = [:]
@@ -352,7 +355,8 @@ final class AppState: ObservableObject {
             calibrationFrames: calibrationFrames,
             calibrationImages: calibrationImages,
             sessionBaseline: sessionBaseline,
-            sessionEvents: sessionEvents
+            sessionEvents: sessionEvents,
+            audioSignals: audioSignals
         )
     }
 
@@ -372,6 +376,7 @@ final class AppState: ObservableObject {
             calibrationImages = result.calibrationImages
             sessionBaseline = result.sessionBaseline
             sessionEvents = result.sessionEvents
+            audioSignals = result.audioSignals
             refreshSessionDerivedState()
             refreshHighlightScores()
         } else {
@@ -390,6 +395,7 @@ final class AppState: ObservableObject {
             calibrationSessionID = ""
             sessionBaseline = nil
             sessionEvents = []
+            audioSignals = AudioSignals()
             refreshSessionDerivedState()
 
             // No in-memory state — try restoring a persisted session from disk.
@@ -407,6 +413,7 @@ final class AppState: ObservableObject {
         sessionEvents = loaded.events
         segments = loaded.baseline.segments
         featureFrames = loaded.frames
+        audioSignals = loaded.audioSignals ?? AudioSignals()
         serveSides = loaded.baseline.serveSides
 
         let effective = SessionMaterializer.effectiveCorrections(from: loaded.events)
@@ -444,7 +451,8 @@ final class AppState: ObservableObject {
             calibrationFrames: calibrationFrames,
             calibrationImages: calibrationImages,
             sessionBaseline: sessionBaseline,
-            sessionEvents: sessionEvents
+            sessionEvents: sessionEvents,
+            audioSignals: audioSignals
         )
     }
 
@@ -629,6 +637,9 @@ final class AppState: ObservableObject {
                 let frames = try await extractor.extractFeatures(from: url, mlModelURL: hitModelURL, progress: callbacks, shuttlecockModelURL: shuttlecockModelURL)
                 self.featureFrames = frames
 
+                statusMessage = "Analyzing audio (onsets + crowd)..."
+                self.audioSignals = await AudioSignalExtractor.extract(from: url)
+
                 analysisProgress.stage = .finalizing
                 let classifier = HybridSegmenter()
                 let rawSegments = classifier.classify(frames: frames, config: config)
@@ -659,6 +670,7 @@ final class AppState: ObservableObject {
 
                 // Persist the analysis as the session baseline (corrections ledger)
                 persistBaseline(for: analyzingURL)
+                sessionStore.saveAudioSignals(audioSignals, for: analyzingURL)
                 // Save results for this video
                 saveCurrentVideoState()
                 // If user navigated away during analysis, update the result for the analyzed URL
@@ -907,8 +919,9 @@ final class AppState: ObservableObject {
     /// ranker when one exists, else the built-in heuristic weights.
     func refreshHighlightScores() {
         let activePoints = games.flatMap(\.points).filter { $0.reviewStatus != .deleted }
+        var base: [UUID: Double]?
         if let model = loadedRankerModel() {
-            let vectors = HighlightScorer.percentileFeatureVectors(points: activePoints, frames: featureFrames)
+            let vectors = HighlightScorer.percentileFeatureVectors(points: activePoints, frames: featureFrames, onsets: audioSignals.onsets)
             var scores: [UUID: Double] = [:]
             var failed = false
             for (id, vector) in vectors {
@@ -919,12 +932,10 @@ final class AppState: ObservableObject {
                     break
                 }
             }
-            if !failed {
-                highlightScores = scores
-                return
-            }
+            if !failed { base = scores }
         }
-        highlightScores = HighlightScorer.scores(points: activePoints, frames: featureFrames)
+        let resolved = base ?? HighlightScorer.scores(points: activePoints, frames: featureFrames, onsets: audioSignals.onsets)
+        highlightScores = HighlightScorer.applyingCheer(to: resolved, points: activePoints, timeline: audioSignals.cheer)
     }
 
     // MARK: - Trim Segments
@@ -1294,6 +1305,9 @@ final class AppState: ObservableObject {
                 let frames = try await extractor.extractFeatures(from: url, mlModelURL: hitModelURL, progress: callbacks, calibrationPriors: priors, shuttlecockModelURL: shuttlecockModelURL)
                 self.featureFrames = frames
 
+                statusMessage = "Analyzing audio (onsets + crowd)..."
+                self.audioSignals = await AudioSignalExtractor.extract(from: url)
+
                 analysisProgress.stage = .finalizing
                 let classifier = HybridSegmenter()
                 let rawSegments = classifier.classify(frames: frames, config: config)
@@ -1324,6 +1338,7 @@ final class AppState: ObservableObject {
 
                 // Persist the re-analysis as the new session baseline
                 persistBaseline(for: url)
+                sessionStore.saveAudioSignals(audioSignals, for: url)
                 saveCurrentVideoState()
             } catch {
                 lastErrorMessage = error.localizedDescription

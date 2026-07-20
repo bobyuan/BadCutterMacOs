@@ -10,14 +10,20 @@ enum HitDetector {
     /// Minimum spacing between two detected hits.
     static let minHitSpacing: TimeInterval = 0.3
 
-    /// Per-hit timestamps within a segment, sorted ascending.
-    static func detectHits(frames: [FeatureFrame], in segment: TimeSegment) -> [TimeInterval] {
+    /// Per-hit timestamps within a segment, sorted ascending. When precise
+    /// vDSP onsets are available (Phase 8 audio upgrade) they replace the
+    /// quantized audio-score edges as the audio half of the fusion.
+    static func detectHits(frames: [FeatureFrame], in segment: TimeSegment, onsets: [TimeInterval] = []) -> [TimeInterval] {
         let window = frames.filter { $0.timestamp >= segment.start && $0.timestamp <= segment.end }
         guard !window.isEmpty else { return [] }
 
+        let audioHits = onsets.isEmpty
+            ? audioOnsets(in: window)
+            : onsets.filter { $0 >= segment.start && $0 <= segment.end }
+
         var hits = trajectoryHits(in: window)
         // Fuse in audio onsets that trajectory missed (dedup within 0.25s).
-        for onset in audioOnsets(in: window) where !hits.contains(where: { abs($0 - onset) < 0.25 }) {
+        for onset in audioHits where !hits.contains(where: { abs($0 - onset) < 0.25 }) {
             hits.append(onset)
         }
         hits.sort()
@@ -96,12 +102,12 @@ enum HighlightScorer {
         maxShuttleSpeed: 0.20, avgMotion: 0.08, climax: 0.12
     )
 
-    static func features(for segment: TimeSegment, frames: [FeatureFrame]) -> PointFeatures {
+    static func features(for segment: TimeSegment, frames: [FeatureFrame], onsets: [TimeInterval] = []) -> PointFeatures {
         let window = frames.filter { $0.timestamp >= segment.start && $0.timestamp <= segment.end }
         var f = PointFeatures()
         f.duration = segment.duration
 
-        let hits = HitDetector.detectHits(frames: frames, in: segment)
+        let hits = HitDetector.detectHits(frames: frames, in: segment, onsets: onsets)
         f.hitCount = Double(hits.count)
         f.tempo = segment.duration > 0 ? f.hitCount / segment.duration : 0
 
@@ -138,9 +144,9 @@ enum HighlightScorer {
     /// Per-point features normalized to their in-video percentile, in
     /// `featureNames` order. Scale-free, so they compare across videos —
     /// both the heuristic and the learned ranker consume these.
-    static func percentileFeatureVectors(points: [GamePoint], frames: [FeatureFrame]) -> [UUID: [Double]] {
+    static func percentileFeatureVectors(points: [GamePoint], frames: [FeatureFrame], onsets: [TimeInterval] = []) -> [UUID: [Double]] {
         guard !points.isEmpty else { return [:] }
-        let featureList = points.map { features(for: $0.rallySegment, frames: frames) }
+        let featureList = points.map { features(for: $0.rallySegment, frames: frames, onsets: onsets) }
 
         func percentiles(_ keyPath: KeyPath<PointFeatures, Double>) -> [Double] {
             let values = featureList.map { $0[keyPath: keyPath] }
@@ -162,12 +168,49 @@ enum HighlightScorer {
     }
 
     /// Score each point against the others in the same video (fixed weights).
-    static func scores(points: [GamePoint], frames: [FeatureFrame]) -> [UUID: Double] {
-        let vectors = percentileFeatureVectors(points: points, frames: frames)
+    static func scores(points: [GamePoint], frames: [FeatureFrame], onsets: [TimeInterval] = []) -> [UUID: Double] {
+        let vectors = percentileFeatureVectors(points: points, frames: frames, onsets: onsets)
         let w = [weights.duration, weights.hitCount, weights.tempo,
                  weights.maxShuttleSpeed, weights.avgMotion, weights.climax]
         return vectors.mapValues { vector in
             zip(vector, w).reduce(0) { $0 + $1.0 * $1.1 }
+        }
+    }
+
+    // MARK: - Cheer Signal (Phase 8)
+
+    /// Peak crowd-excitement confidence just after each point ends
+    /// (cheers follow the winning shot: window [end − 2s, end + 3s]).
+    static func cheerValues(points: [GamePoint], timeline: [AudioSignals.CheerSample]) -> [UUID: Double] {
+        guard !timeline.isEmpty else { return [:] }
+        var values: [UUID: Double] = [:]
+        for point in points {
+            let windowScores = timeline
+                .filter { $0.t >= point.end - 2 && $0.t <= point.end + 3 }
+                .map(\.score)
+            values[point.id] = windowScores.max() ?? 0
+        }
+        return values
+    }
+
+    /// Blend the cheer signal into base scores (heuristic or ranker):
+    /// 90% base + 10% in-video cheer percentile. No timeline → unchanged.
+    static func applyingCheer(
+        to base: [UUID: Double],
+        points: [GamePoint],
+        timeline: [AudioSignals.CheerSample]
+    ) -> [UUID: Double] {
+        let cheer = cheerValues(points: points, timeline: timeline)
+        guard !cheer.isEmpty, points.count > 1 else { return base }
+
+        let values = points.compactMap { cheer[$0.id] }
+        var percentiles: [UUID: Double] = [:]
+        for point in points {
+            guard let v = cheer[point.id] else { continue }
+            percentiles[point.id] = Double(values.filter { $0 < v }.count) / Double(values.count - 1)
+        }
+        return base.reduce(into: [:]) { result, entry in
+            result[entry.key] = entry.value * 0.9 + (percentiles[entry.key] ?? 0.5) * 0.1
         }
     }
 

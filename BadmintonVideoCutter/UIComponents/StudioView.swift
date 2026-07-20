@@ -33,9 +33,9 @@ struct StudioView: View {
                 .layoutPriority(1)
 
             InspectorPane(appState: appState, controller: timeline, showCalibration: $showCalibration)
-                .frame(minWidth: 300, idealWidth: 340, maxWidth: 440)
+                .frame(minWidth: 360, idealWidth: 400, maxWidth: 520)
         }
-        .frame(minWidth: 1100, minHeight: 700)
+        .frame(minWidth: 1160, minHeight: 700)
         .safeAreaInset(edge: .bottom, spacing: 0) { statusBar }
         .sheet(isPresented: $showCalibration) {
             VStack(spacing: 0) {
