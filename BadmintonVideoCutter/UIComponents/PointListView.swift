@@ -199,8 +199,8 @@ struct PointListView: View {
                                     isBatchSelected: batchSelection.contains(point.id),
                                     isOverlapping: appState.overlappingPointIDs.contains(point.id),
                                     serveSide: appState.effectiveServeSide(for: point.id),
-                                    serveLabelA: appState.serveSideLabel(.left),
-                                    serveLabelB: appState.serveSideLabel(.right),
+                                    serveLabelA: appState.serveMenuLabels(for: game).left,
+                                    serveLabelB: appState.serveMenuLabels(for: game).right,
                                     onOverrideServe: { side in
                                         appState.overrideServeSide(pointID: point.id, side: side)
                                     },
@@ -260,8 +260,8 @@ struct PointListView: View {
                     isBatchSelected: batchSelection.contains(entry.point.id),
                     isOverlapping: appState.overlappingPointIDs.contains(entry.point.id),
                     serveSide: appState.effectiveServeSide(for: entry.point.id),
-                    serveLabelA: appState.serveSideLabel(.left),
-                    serveLabelB: appState.serveSideLabel(.right),
+                    serveLabelA: appState.serveMenuLabels(for: entry.game).left,
+                    serveLabelB: appState.serveMenuLabels(for: entry.game).right,
                     onOverrideServe: { side in
                         appState.overrideServeSide(pointID: entry.point.id, side: side)
                     },
@@ -339,8 +339,8 @@ struct PointRow: View {
     var isBatchSelected: Bool = false
     var isOverlapping: Bool = false
     var serveSide: ServeDetector.ServeSide?
-    var serveLabelA = "Left side"
-    var serveLabelB = "Right side"
+    var serveLabelA = "Side A"
+    var serveLabelB = "Side B"
     var onOverrideServe: ((ServeDetector.ServeSide) -> Void)?
     let onTap: () -> Void
 

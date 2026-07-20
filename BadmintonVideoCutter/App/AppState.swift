@@ -1306,16 +1306,37 @@ final class AppState: ObservableObject {
 
     // MARK: - Serve Detection & Scoring
 
-    /// Human label for a side under the detected camera orientation:
+    /// Physical hint for a side under the detected camera orientation:
     /// horizontal split → Left/Right; vertical split → Far (top) / Near (bottom).
     func serveSideLabel(_ side: ServeDetector.ServeSide) -> String {
         switch (side, serveAxis) {
-        case (.left, .horizontal): return "Left side"
-        case (.right, .horizontal): return "Right side"
-        case (.left, .vertical): return "Far side"
-        case (.right, .vertical): return "Near side"
+        case (.left, .horizontal): return "Left"
+        case (.right, .horizontal): return "Right"
+        case (.left, .vertical): return "Far"
+        case (.right, .vertical): return "Near"
         case (.unknown, _): return "Unknown"
         }
+    }
+
+    /// A/B labels aligned with the score columns: "Side A" is the party that
+    /// served the game's first point (the score reads A:B). The physical
+    /// position stays as a hint, e.g. "Side A (far)".
+    func serveMenuLabels(for game: Game) -> (left: String, right: String) {
+        let firstSide = game.points.first(where: { $0.reviewStatus != .deleted })
+            .flatMap { effectiveServeSide(for: $0.id) } ?? .left
+        let aIsLeft = firstSide != .right
+        let left = "\(aIsLeft ? "Side A" : "Side B") (\(serveSideLabel(.left).lowercased()))"
+        let right = "\(aIsLeft ? "Side B" : "Side A") (\(serveSideLabel(.right).lowercased()))"
+        return (left, right)
+    }
+
+    /// The A/B label for one side within the game containing a point.
+    func serveABLabel(_ side: ServeDetector.ServeSide, forPointID pointID: UUID) -> String {
+        guard let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }) else {
+            return serveSideLabel(side)
+        }
+        let labels = serveMenuLabels(for: game)
+        return side == .right ? labels.right : labels.left
     }
 
     /// The serve side scoring will use for a point (override beats detection).
@@ -1328,7 +1349,7 @@ final class AppState: ObservableObject {
     func overrideServeSide(pointID: UUID, side: ServeDetector.ServeSide) {
         recordEvent(.serveSideOverridden(pointID: pointID, side: side.rawValue))
         computeAllScores()
-        statusMessage = "Serve pinned to \(serveSideLabel(side).lowercased()) — scores recalculated."
+        statusMessage = "Serve pinned to \(serveABLabel(side, forPointID: pointID)) — scores recalculated."
     }
 
     /// Points whose start moved since their serve side was detected.

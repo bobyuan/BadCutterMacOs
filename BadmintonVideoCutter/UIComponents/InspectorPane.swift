@@ -1015,8 +1015,8 @@ struct HistoryPanel: View {
             let label = PointFeedbackReason(rawValue: reason)?.label ?? reason
             return "Feedback on \(pointLabel(id, run: run)): \(label)"
         case .serveSideOverridden(let id, let side):
-            let label = ServeDetector.ServeSide(rawValue: side).map { appState.serveSideLabel($0) } ?? side
-            return "Pinned serve of \(pointLabel(id, run: run)) to \(label.lowercased())"
+            let label = ServeDetector.ServeSide(rawValue: side).map { appState.serveABLabel($0, forPointID: id) } ?? side
+            return "Pinned serve of \(pointLabel(id, run: run)) to \(label)"
         case .savedToPool(let rally, let background):
             return "Saved for training: \(rally) rally + \(background) background clips"
         case .exported(let output):
