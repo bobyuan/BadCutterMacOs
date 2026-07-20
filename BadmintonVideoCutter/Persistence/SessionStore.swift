@@ -1,14 +1,20 @@
 import Foundation
 import CryptoKit
 
-/// Per-video session persistence: an append-only correction ledger, the
-/// analysis baseline, and a feature-frame cache, stored under
+/// Per-video session persistence: an append-only correction ledger shared by
+/// every analysis run, plus one directory per run, stored under
 /// Application Support/BadmintonVideoCutter/sessions/<videoID>/
 ///
-///   ledger.jsonl    append-only events, one JSON object per line
-///   baseline.json   analysis output (segments, games, serve sides)
-///   frames.json     cached FeatureFrames (CodableFrame array) for replay
-///   meta.json       video identity + bookkeeping
+///   ledger.jsonl          append-only events (run-tagged), one JSON per line
+///   meta.json             video identity + bookkeeping
+///   current.json          which analysis run is active
+///   runs/rNNN/
+///     baseline.json       that run's analysis output
+///     frames.json         cached FeatureFrames for replay
+///     audio.json          onsets + cheer timeline
+///
+/// Re-analysis creates a new run; older runs (and the corrections made on
+/// them) are never deleted, so the user can switch back at any time.
 final class SessionStore {
     static let shared = SessionStore()
 
@@ -28,11 +34,22 @@ final class SessionStore {
     }
 
     struct LoadedSession {
+        var run: Int
         var baseline: SessionBaseline
-        /// Events recorded after the baseline was saved, in ledger order.
+        /// Events belonging to this run, in ledger order.
         var events: [SessionEvent]
         var frames: [FeatureFrame]
         var audioSignals: AudioSignals?
+    }
+
+    struct RunSummary: Identifiable, Equatable {
+        var run: Int
+        var savedAt: Date
+        var pointCount: Int
+        var eventSeqAtSave: Int
+
+        var id: Int { run }
+        var label: String { "Analysis #\(run)" }
     }
 
     // MARK: - Encoding
@@ -92,18 +109,95 @@ final class SessionStore {
         videoID(for: url).map(sessionDirectory(forVideoID:))
     }
 
+    // MARK: - Run Layout
+
+    private struct CurrentRunPointer: Codable { var run: Int }
+
+    func runDirectory(forVideoID vid: String, run: Int) -> URL {
+        sessionDirectory(forVideoID: vid)
+            .appendingPathComponent("runs")
+            .appendingPathComponent(String(format: "r%03d", run))
+    }
+
+    /// Adopt a pre-versioning session (flat baseline.json etc.) as run 1.
+    /// No-op when already migrated or nothing to migrate.
+    func migrateLegacyLayout(forVideoID vid: String) {
+        let fm = FileManager.default
+        let dir = sessionDirectory(forVideoID: vid)
+        let legacyBaseline = dir.appendingPathComponent("baseline.json")
+        let runsDir = dir.appendingPathComponent("runs")
+        guard fm.fileExists(atPath: legacyBaseline.path),
+              !fm.fileExists(atPath: runsDir.path) else { return }
+
+        let r1 = runDirectory(forVideoID: vid, run: 1)
+        try? fm.createDirectory(at: r1, withIntermediateDirectories: true)
+        for name in ["baseline.json", "frames.json", "audio.json"] {
+            let src = dir.appendingPathComponent(name)
+            if fm.fileExists(atPath: src.path) {
+                try? fm.moveItem(at: src, to: r1.appendingPathComponent(name))
+            }
+        }
+        setCurrentRun(1, forVideoID: vid)
+    }
+
+    /// Existing run numbers, ascending.
+    func runNumbers(forVideoID vid: String) -> [Int] {
+        migrateLegacyLayout(forVideoID: vid)
+        let runsDir = sessionDirectory(forVideoID: vid).appendingPathComponent("runs")
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: runsDir.path) else { return [] }
+        return names.compactMap { name in
+            name.hasPrefix("r") ? Int(name.dropFirst()) : nil
+        }.sorted()
+    }
+
+    func currentRun(forVideoID vid: String) -> Int? {
+        migrateLegacyLayout(forVideoID: vid)
+        let url = sessionDirectory(forVideoID: vid).appendingPathComponent("current.json")
+        guard let data = try? Data(contentsOf: url),
+              let pointer = try? Self.decoder.decode(CurrentRunPointer.self, from: data) else {
+            return runNumbers(forVideoID: vid).last
+        }
+        return pointer.run
+    }
+
+    func setCurrentRun(_ run: Int, forVideoID vid: String) {
+        let url = sessionDirectory(forVideoID: vid).appendingPathComponent("current.json")
+        if let data = try? Self.prettyEncoder.encode(CurrentRunPointer(run: run)) {
+            try? data.write(to: url)
+        }
+    }
+
+    /// Lightweight per-run info for the history UI.
+    func runSummaries(forVideoID vid: String) -> [RunSummary] {
+        runNumbers(forVideoID: vid).compactMap { run in
+            guard let baseline = loadBaseline(forVideoID: vid, run: run) else { return nil }
+            return RunSummary(
+                run: run,
+                savedAt: baseline.savedAt,
+                pointCount: baseline.games.reduce(0) { $0 + $1.points.count },
+                eventSeqAtSave: baseline.eventSeqAtSave
+            )
+        }
+    }
+
+    private func loadBaseline(forVideoID vid: String, run: Int) -> SessionBaseline? {
+        let url = runDirectory(forVideoID: vid, run: run).appendingPathComponent("baseline.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? Self.decoder.decode(SessionBaseline.self, from: data)
+    }
+
     // MARK: - Ledger
 
-    /// Append an event to the video's ledger. Returns the assigned seq.
+    /// Append an event tagged with the run it applies to. Returns the seq.
     @discardableResult
-    func append(_ event: SessionEvent, for url: URL) -> Int? {
+    func append(_ event: SessionEvent, for url: URL, run: Int? = nil) -> Int? {
         guard let vid = videoID(for: url) else { return nil }
         let dir = sessionDirectory(forVideoID: vid)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let ledgerURL = dir.appendingPathComponent("ledger.jsonl")
 
         let seq = nextSeq(forVideoID: vid)
-        let entry = LedgerEntry(seq: seq, ts: Date(), event: event)
+        let entry = LedgerEntry(seq: seq, ts: Date(), event: event, run: run ?? currentRun(forVideoID: vid))
         guard var data = try? Self.ledgerEncoder.encode(entry) else { return nil }
         data.append(0x0A)
 
@@ -136,10 +230,20 @@ final class SessionStore {
         }
     }
 
+    /// Ledger entries belonging to one run. Untagged (pre-versioning) entries
+    /// belong to run 1 when their seq is inside that baseline's window.
+    func ledgerEntries(forVideoID vid: String, run: Int) -> [LedgerEntry] {
+        guard let baseline = loadBaseline(forVideoID: vid, run: run) else { return [] }
+        return loadLedger(forVideoID: vid).filter { entry in
+            if let tagged = entry.run { return tagged == run }
+            return run == 1 && entry.seq >= baseline.eventSeqAtSave
+        }
+    }
+
     // MARK: - Baseline + Frames
 
-    /// Persist a fresh analysis result as the new baseline (also records an
-    /// analysisRun audit event and refreshes meta.json + frames cache).
+    /// Persist a fresh analysis as a NEW run (never overwrites older runs)
+    /// and point `current` at it. Returns the baseline and its run number.
     @discardableResult
     func saveBaseline(
         segments: [TimeSegment],
@@ -149,9 +253,11 @@ final class SessionStore {
         frames: [FeatureFrame],
         usedHitModel: Bool,
         for url: URL
-    ) -> SessionBaseline? {
+    ) -> (baseline: SessionBaseline, run: Int)? {
         guard let vid = videoID(for: url) else { return nil }
-        let dir = sessionDirectory(forVideoID: vid)
+        migrateLegacyLayout(forVideoID: vid)
+        let run = (runNumbers(forVideoID: vid).last ?? 0) + 1
+        let dir = runDirectory(forVideoID: vid, run: run)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         var baseline = SessionBaseline()
@@ -170,31 +276,36 @@ final class SessionStore {
         }
 
         // Meta
+        let sessionDir = sessionDirectory(forVideoID: vid)
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64).flatMap { $0 } ?? 0
         let meta = SessionMeta(videoID: vid, fileName: url.lastPathComponent, fileSize: fileSize, lastOpened: Date())
         if let metaData = try? Self.prettyEncoder.encode(meta) {
-            try? metaData.write(to: dir.appendingPathComponent("meta.json"))
+            try? metaData.write(to: sessionDir.appendingPathComponent("meta.json"))
         }
 
+        setCurrentRun(run, forVideoID: vid)
         let pointCount = games.reduce(0) { $0 + $1.points.count }
-        append(.analysisRun(pointCount: pointCount, usedHitModel: usedHitModel), for: url)
-        return baseline
+        append(.analysisRun(pointCount: pointCount, usedHitModel: usedHitModel), for: url, run: run)
+        return (baseline, run)
     }
 
-    /// Persist the per-video audio signals (onsets + cheer timeline).
-    func saveAudioSignals(_ signals: AudioSignals, for url: URL) {
-        guard let dir = sessionDirectory(for: url) else { return }
+    /// Persist the per-video audio signals into a run's directory.
+    func saveAudioSignals(_ signals: AudioSignals, for url: URL, run: Int? = nil) {
+        guard let vid = videoID(for: url),
+              let targetRun = run ?? currentRun(forVideoID: vid) else { return }
+        let dir = runDirectory(forVideoID: vid, run: targetRun)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         if let data = try? Self.ledgerEncoder.encode(signals) {
             try? data.write(to: dir.appendingPathComponent("audio.json"))
         }
     }
 
-    /// Overwrite baseline.json in place (e.g. when async serve detection
+    /// Overwrite a run's baseline in place (e.g. when async serve detection
     /// finishes after the baseline was first saved). Does not touch the ledger.
-    func rewriteBaseline(_ baseline: SessionBaseline, for url: URL) {
-        guard let dir = sessionDirectory(for: url) else { return }
-        _ = writeBaseline(baseline, toDirectory: dir)
+    func rewriteBaseline(_ baseline: SessionBaseline, for url: URL, run: Int? = nil) {
+        guard let vid = videoID(for: url),
+              let targetRun = run ?? currentRun(forVideoID: vid) else { return }
+        _ = writeBaseline(baseline, toDirectory: runDirectory(forVideoID: vid, run: targetRun))
     }
 
     private func writeBaseline(_ baseline: SessionBaseline, toDirectory dir: URL) -> Bool {
@@ -204,17 +315,30 @@ final class SessionStore {
 
     // MARK: - Load
 
-    func loadSession(for url: URL) -> LoadedSession? {
+    /// Load a session at a specific run (nil = the current run).
+    func loadSession(for url: URL, run: Int? = nil) -> LoadedSession? {
         guard let vid = videoID(for: url) else { return nil }
-        let dir = sessionDirectory(forVideoID: vid)
-        guard let baselineData = try? Data(contentsOf: dir.appendingPathComponent("baseline.json")),
-              let baseline = try? Self.decoder.decode(SessionBaseline.self, from: baselineData) else {
-            return nil
-        }
+        migrateLegacyLayout(forVideoID: vid)
+        guard let targetRun = run ?? currentRun(forVideoID: vid),
+              let session = loadRun(videoID: vid, run: targetRun) else { return nil }
 
-        let events = loadLedger(forVideoID: vid)
-            .filter { $0.seq >= baseline.eventSeqAtSave }
-            .map(\.event)
+        // Touch lastOpened
+        let dir = sessionDirectory(forVideoID: vid)
+        if var meta = try? Self.decoder.decode(SessionMeta.self, from: Data(contentsOf: dir.appendingPathComponent("meta.json"))) {
+            meta.lastOpened = Date()
+            if let metaData = try? Self.prettyEncoder.encode(meta) {
+                try? metaData.write(to: dir.appendingPathComponent("meta.json"))
+            }
+        }
+        return session
+    }
+
+    /// Load one run's full state by videoID (also used by the shadow-eval
+    /// corpus and the ranker's rating pool).
+    func loadRun(videoID vid: String, run: Int) -> LoadedSession? {
+        guard let baseline = loadBaseline(forVideoID: vid, run: run),
+              !baseline.games.isEmpty else { return nil }
+        let dir = runDirectory(forVideoID: vid, run: run)
 
         var frames: [FeatureFrame] = []
         if let framesData = try? Data(contentsOf: dir.appendingPathComponent("frames.json")),
@@ -225,14 +349,17 @@ final class SessionStore {
         let audioSignals = (try? Data(contentsOf: dir.appendingPathComponent("audio.json")))
             .flatMap { try? Self.decoder.decode(AudioSignals.self, from: $0) }
 
-        // Touch lastOpened
-        if var meta = try? Self.decoder.decode(SessionMeta.self, from: Data(contentsOf: dir.appendingPathComponent("meta.json"))) {
-            meta.lastOpened = Date()
-            if let metaData = try? Self.prettyEncoder.encode(meta) {
-                try? metaData.write(to: dir.appendingPathComponent("meta.json"))
-            }
-        }
+        return LoadedSession(
+            run: run,
+            baseline: baseline,
+            events: ledgerEntries(forVideoID: vid, run: run).map(\.event),
+            frames: frames,
+            audioSignals: audioSignals
+        )
+    }
 
-        return LoadedSession(baseline: baseline, events: events, frames: frames, audioSignals: audioSignals)
+    /// All videoIDs that have at least one run on disk.
+    func allVideoIDs() -> [String] {
+        (try? FileManager.default.contentsOfDirectory(atPath: root.path))?.sorted() ?? []
     }
 }

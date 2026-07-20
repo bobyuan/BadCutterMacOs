@@ -8,6 +8,7 @@ struct PointListView: View {
     var onFeedback: ((GamePoint, PointFeedbackReason) -> Void)?
 
     @State private var sortByScore = false
+    @State private var showReanalyzeConfirm = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -34,6 +35,9 @@ struct PointListView: View {
                     Text("\(totalPoints) points in \(gameCount) game\(gameCount == 1 ? "" : "s")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if !appState.runSummaries.isEmpty {
+                        versionPill
+                    }
                     Spacer()
                     Picker("", selection: $sortByScore) {
                         Text("Time").tag(false)
@@ -75,6 +79,48 @@ struct PointListView: View {
                 saveForTrainingButton
             }
         }
+        .alert("Re-analyze this video?", isPresented: $showReanalyzeConfirm) {
+            Button("Re-analyze — keep history") { appState.analyzeCurrentVideo() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            let points = appState.games.reduce(0) { $0 + $1.activePointCount }
+            let edits = appState.currentRunAdjustmentCount
+            Text("Your current version (Analysis #\(appState.currentAnalysisRun) — \(points) points, \(edits) manual adjustment\(edits == 1 ? "" : "s")) will be kept in History. You can switch back anytime.")
+        }
+    }
+
+    // MARK: - Version Pill
+
+    /// Always-visible analysis version indicator + switcher. Turns orange
+    /// when an older run is loaded.
+    private var versionPill: some View {
+        let latest = appState.runSummaries.last?.run ?? appState.currentAnalysisRun
+        let isLatest = appState.currentAnalysisRun == latest
+        return Menu {
+            ForEach(appState.runSummaries.reversed()) { summary in
+                Button {
+                    appState.switchToRun(summary.run)
+                } label: {
+                    let mark = summary.run == appState.currentAnalysisRun ? "✓ " : ""
+                    Text("\(mark)\(summary.label) — \(summary.savedAt.formatted(.dateTime.month().day())), \(summary.pointCount) pts")
+                }
+            }
+            Divider()
+            Button("Re-analyze…") { showReanalyzeConfirm = true }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 9))
+                Text("Analysis #\(appState.currentAnalysisRun)\(isLatest ? "" : " (older)")")
+                    .font(.caption)
+            }
+            .foregroundStyle(isLatest ? Color.secondary : Color.orange)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(isLatest
+              ? "Analysis versions — every re-analysis is kept; switch anytime"
+              : "You are viewing an older analysis version")
     }
 
     // MARK: - Lists

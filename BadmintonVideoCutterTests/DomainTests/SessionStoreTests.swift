@@ -178,7 +178,8 @@ final class SessionStoreTests: XCTestCase {
             for: tempVideo
         )
         XCTAssertNotNil(baseline)
-        XCTAssertEqual(baseline?.eventSeqAtSave, 1)
+        XCTAssertEqual(baseline?.baseline.eventSeqAtSave, 1)
+        XCTAssertEqual(baseline?.run, 1)
 
         // Post-baseline corrections
         let p2 = games[0].points[1].id
@@ -216,13 +217,106 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertNil(makeStore().loadSession(for: tempVideo))
     }
 
+    // MARK: - Analysis Runs (history versioning)
+
+    @discardableResult
+    private func save(_ store: SessionStore, games: [Game]) -> (baseline: SessionBaseline, run: Int)? {
+        store.saveBaseline(
+            segments: games[0].points.map(\.rallySegment), games: games, serveSides: [:],
+            videoDuration: 120, frames: makeFrames(count: 10), usedHitModel: false, for: tempVideo
+        )
+    }
+
+    func testReanalysisCreatesNewRunAndPreservesOld() throws {
+        let store = makeStore()
+        let games = makeGames()
+        let p2 = games[0].points[1].id
+
+        // Run 1 + a correction on it.
+        XCTAssertEqual(save(store, games: games)?.run, 1)
+        store.append(.pointDeleted(pointID: p2), for: tempVideo)
+
+        // Re-analysis → run 2; current moves; run 1 untouched.
+        XCTAssertEqual(save(store, games: games)?.run, 2)
+        let vid = try XCTUnwrap(store.videoID(for: tempVideo))
+        XCTAssertEqual(store.currentRun(forVideoID: vid), 2)
+        XCTAssertEqual(store.runSummaries(forVideoID: vid).map(\.run), [1, 2])
+
+        // Run 2 sees only its own events (analysisRun), not run 1's delete.
+        let run2 = try XCTUnwrap(store.loadRun(videoID: vid, run: 2))
+        XCTAssertEqual(SessionMaterializer.effectiveCorrections(from: run2.events).count, 0)
+
+        // Run 1 still replays its correction exactly.
+        let run1 = try XCTUnwrap(store.loadRun(videoID: vid, run: 1))
+        let corrections = SessionMaterializer.effectiveCorrections(from: run1.events)
+        XCTAssertEqual(corrections.count, 1)
+        let materialized = SessionMaterializer.apply(events: corrections, to: run1.baseline.games)
+        XCTAssertEqual(materialized[0].points[1].reviewStatus, .deleted)
+    }
+
+    func testSwitchBackToOlderRun() throws {
+        let store = makeStore()
+        let games = makeGames()
+        XCTAssertEqual(save(store, games: games)?.run, 1)
+        XCTAssertEqual(save(store, games: games)?.run, 2)
+
+        let vid = try XCTUnwrap(store.videoID(for: tempVideo))
+        store.setCurrentRun(1, forVideoID: vid)
+
+        // loadSession honors the pointer; edits made now are tagged to run 1.
+        let loaded = try XCTUnwrap(makeStore().loadSession(for: tempVideo))
+        XCTAssertEqual(loaded.run, 1)
+        store.append(.pointDeleted(pointID: games[0].points[0].id), for: tempVideo, run: 1)
+        XCTAssertEqual(store.ledgerEntries(forVideoID: vid, run: 1).filter { $0.event.isCorrection }.count, 1)
+        XCTAssertEqual(store.ledgerEntries(forVideoID: vid, run: 2).filter { $0.event.isCorrection }.count, 0)
+    }
+
+    func testLegacyFlatLayoutMigratesToRunOne() throws {
+        let store = makeStore()
+        let vid = try XCTUnwrap(store.videoID(for: tempVideo))
+        let dir = store.sessionDirectory(forVideoID: vid)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Hand-write the pre-versioning layout: flat baseline + untagged ledger.
+        let games = makeGames()
+        var baseline = SessionBaseline()
+        baseline.eventSeqAtSave = 1
+        baseline.games = games
+        baseline.segments = games[0].points.map(\.rallySegment)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(baseline).write(to: dir.appendingPathComponent("baseline.json"))
+        try encoder.encode(games[0].points.map { _ in CodableFrame(from: FeatureFrame(timestamp: 0, motionScore: 0, audioScore: 0)) })
+            .write(to: dir.appendingPathComponent("frames.json"))
+        let legacyEntries = [
+            LedgerEntry(seq: 0, ts: Date(), event: .analysisRun(pointCount: 2, usedHitModel: false), run: nil),
+            LedgerEntry(seq: 1, ts: Date(), event: .analysisRun(pointCount: 3, usedHitModel: false), run: nil),
+            LedgerEntry(seq: 2, ts: Date(), event: .pointDeleted(pointID: games[0].points[0].id), run: nil)
+        ]
+        let lines = try legacyEntries.map { entry -> String in
+            String(data: try encoder.encode(entry), encoding: .utf8)!
+        }
+        try (lines.joined(separator: "\n") + "\n").write(to: dir.appendingPathComponent("ledger.jsonl"), atomically: true, encoding: .utf8)
+
+        // Load migrates: runs/r001 exists, flat files moved, events windowed.
+        let loaded = try XCTUnwrap(makeStore().loadSession(for: tempVideo))
+        XCTAssertEqual(loaded.run, 1)
+        XCTAssertEqual(loaded.baseline.games[0].points.count, 3)
+        // Untagged events before eventSeqAtSave (seq 0) are excluded; 1 & 2 kept.
+        XCTAssertEqual(loaded.events.count, 2)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("baseline.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: store.runDirectory(forVideoID: vid, run: 1).appendingPathComponent("baseline.json").path))
+    }
+
     func testRewriteBaselinePreservesSeqAndUpdatesSides() throws {
         let store = makeStore()
         let games = makeGames()
-        var baseline = try XCTUnwrap(store.saveBaseline(
+        let saved = try XCTUnwrap(store.saveBaseline(
             segments: [], games: games, serveSides: [:],
             videoDuration: 60, frames: [], usedHitModel: false, for: tempVideo
         ))
+        var baseline = saved.baseline
 
         let pID = games[0].points[0].id
         baseline.serveSides = [pID: .right]

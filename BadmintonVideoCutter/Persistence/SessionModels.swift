@@ -43,6 +43,10 @@ struct LedgerEntry: Codable {
     var seq: Int
     var ts: Date
     var event: SessionEvent
+    /// Analysis run this event applies to. nil on entries written before run
+    /// versioning existed — those belong to the migrated first run when their
+    /// seq falls inside its window.
+    var run: Int?
 }
 
 // MARK: - Baseline Snapshot

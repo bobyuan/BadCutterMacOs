@@ -163,22 +163,17 @@ enum ShadowEval {
 /// Cheap (no video decode) — the regression corpus from DESIGN §3.1.
 enum ShadowEvaluator {
 
-    /// Sessions eligible for evaluation: a baseline plus at least one
-    /// effective correction.
+    /// Sessions eligible for evaluation: each video's CURRENT run (the user's
+    /// authoritative version) with at least one effective correction.
     static func evaluateCorpus(
         store: SessionStore,
-        sessionsRoot: URL,
         config: AnalysisConfig
     ) -> ShadowEvalMetrics {
-        let fm = FileManager.default
-        guard let ids = try? fm.contentsOfDirectory(atPath: sessionsRoot.path) else {
-            return ShadowEval.aggregate([])
-        }
-
         var results: [ShadowEval.SessionResult] = []
-        for vid in ids.sorted() {
-            let dir = sessionsRoot.appendingPathComponent(vid)
-            guard let session = loadSession(inDirectory: dir, store: store, videoID: vid) else { continue }
+        for vid in store.allVideoIDs() {
+            guard let run = store.currentRun(forVideoID: vid),
+                  let session = store.loadRun(videoID: vid, run: run),
+                  !session.frames.isEmpty else { continue }
 
             let effective = SessionMaterializer.effectiveCorrections(from: session.events)
             guard !effective.isEmpty else { continue }
@@ -193,30 +188,6 @@ enum ShadowEvaluator {
             results.append(ShadowEval.evaluate(predicted: predicted, groundTruth: truth, addedPointIDs: added))
         }
         return ShadowEval.aggregate(results)
-    }
-
-    private static func loadSession(
-        inDirectory dir: URL,
-        store: SessionStore,
-        videoID: String
-    ) -> SessionStore.LoadedSession? {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let baselineData = try? Data(contentsOf: dir.appendingPathComponent("baseline.json")),
-              let baseline = try? decoder.decode(SessionBaseline.self, from: baselineData),
-              !baseline.games.isEmpty,
-              let framesData = try? Data(contentsOf: dir.appendingPathComponent("frames.json")),
-              let codable = try? decoder.decode([CodableFrame].self, from: framesData),
-              !codable.isEmpty else { return nil }
-
-        let events = store.loadLedger(forVideoID: videoID)
-            .filter { $0.seq >= baseline.eventSeqAtSave }
-            .map(\.event)
-        return SessionStore.LoadedSession(
-            baseline: baseline,
-            events: events,
-            frames: codable.map { $0.toFeatureFrame() }
-        )
     }
 
     /// The same pipeline AppState runs after feature extraction.

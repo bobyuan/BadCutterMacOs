@@ -4,6 +4,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case points = "Points"
     case export = "Export"
     case models = "Models"
+    case history = "History"
 
     var id: String { rawValue }
 }
@@ -36,6 +37,8 @@ struct InspectorPane: View {
                 ExportPanel(appState: appState)
             case .models:
                 ModelsPanel(appState: appState, showCalibration: $showCalibration)
+            case .history:
+                HistoryPanel(appState: appState)
             }
         }
     }
@@ -753,5 +756,204 @@ struct ModelsPanel: View {
                 .font(.caption2)
                 .foregroundStyle(.orange)
         }
+    }
+}
+
+// MARK: - History Panel
+
+/// Analysis versions + the full adjustment audit trail, straight from the
+/// ledger. Makes "re-analysis never erases anything" visible.
+struct HistoryPanel: View {
+    @ObservedObject var appState: AppState
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                if appState.runSummaries.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.tertiary)
+                        Text("No analysis yet")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Text("Every analysis and every manual adjustment will be recorded here.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                } else {
+                    ForEach(appState.runSummaries.reversed()) { summary in
+                        runCard(summary)
+                    }
+                    footer
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    private func runCard(_ summary: SessionStore.RunSummary) -> some View {
+        let isCurrent = summary.run == appState.currentAnalysisRun
+        let entries = appState.historyEntries(forRun: summary.run)
+        let corrections = entries.filter { $0.event.isCorrection }.count
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(summary.label)
+                    .font(.callout).bold()
+                if isCurrent {
+                    Text("current")
+                        .font(.system(size: 9, weight: .semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 1.5)
+                        .background(Capsule().fill(.green.opacity(0.18)))
+                        .foregroundStyle(.green)
+                }
+                Text(summary.savedAt, format: .dateTime.month().day().hour().minute())
+                    .font(.caption2).foregroundStyle(.secondary)
+                Text("\(summary.pointCount) pts")
+                    .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                Spacer()
+                if !isCurrent {
+                    Button("Switch back") { appState.switchToRun(summary.run) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                }
+            }
+
+            if corrections > 0 || !entries.isEmpty {
+                Text(activitySummary(entries: entries))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(Array(entries.prefix(30).enumerated()), id: \.offset) { _, entry in
+                historyRow(entry)
+            }
+            if entries.count > 30 {
+                Text("… \(entries.count - 30) earlier events")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(isCurrent ? Color.green.opacity(0.06) : Color.gray.opacity(0.07)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isCurrent ? Color.green.opacity(0.35) : Color.gray.opacity(0.2)))
+    }
+
+    private func activitySummary(entries: [LedgerEntry]) -> String {
+        var deleted = 0, added = 0, moved = 0, rated = 0, exported = 0
+        for entry in entries {
+            switch entry.event {
+            case .pointDeleted: deleted += 1
+            case .pointAdded: added += 1
+            case .boundaryChanged: moved += 1
+            case .highlightRated: rated += 1
+            case .exported: exported += 1
+            default: break
+            }
+        }
+        var parts: [String] = []
+        if moved > 0 { parts.append("\(moved) boundary edit\(moved == 1 ? "" : "s")") }
+        if added > 0 { parts.append("\(added) added") }
+        if deleted > 0 { parts.append("\(deleted) deleted") }
+        if rated > 0 { parts.append("\(rated) rated") }
+        if exported > 0 { parts.append("\(exported) export\(exported == 1 ? "" : "s")") }
+        return parts.isEmpty ? "No manual adjustments yet" : parts.joined(separator: " · ")
+    }
+
+    private func historyRow(_ entry: LedgerEntry) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: icon(for: entry.event))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+            Text(describe(entry.event))
+                .font(.caption)
+                .lineLimit(2)
+            Spacer()
+            Text(entry.ts, format: .dateTime.month().day().hour().minute())
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func icon(for event: SessionEvent) -> String {
+        switch event {
+        case .analysisRun: return "wand.and.stars"
+        case .pointDeleted: return "trash"
+        case .pointRestored: return "arrow.uturn.backward"
+        case .pointAdded: return "plus.circle"
+        case .boundaryChanged: return "arrow.left.and.right"
+        case .highlightRated: return "hand.thumbsup"
+        case .pointFeedback: return "exclamationmark.bubble"
+        case .savedToPool: return "square.and.arrow.down.on.square"
+        case .exported: return "square.and.arrow.up"
+        case .undo: return "arrow.uturn.left"
+        case .redo: return "arrow.uturn.right"
+        }
+    }
+
+    private func describe(_ event: SessionEvent) -> String {
+        switch event {
+        case .analysisRun(let pointCount, let usedHitModel):
+            return "Analyzed: \(pointCount) points\(usedHitModel ? " (hit model)" : "")"
+        case .pointDeleted(let id):
+            return "Deleted \(pointLabel(id))"
+        case .pointRestored(let id):
+            return "Restored \(pointLabel(id))"
+        case .pointAdded(_, let start, let end):
+            return String(format: "Added point %@ – %@", timestamp(start), timestamp(end))
+        case .boundaryChanged(let id, let edge, let from, let to):
+            return String(format: "Moved %@ %@ %+.1fs", pointLabel(id), edge == .start ? "start" : "end", to - from)
+        case .highlightRated(let id, let rating):
+            switch rating {
+            case "up": return "Rated \(pointLabel(id)) 👍"
+            case "down": return "Rated \(pointLabel(id)) 👎"
+            default: return "Cleared rating on \(pointLabel(id))"
+            }
+        case .pointFeedback(let id, let reason):
+            let label = PointFeedbackReason(rawValue: reason)?.label ?? reason
+            return "Feedback on \(pointLabel(id)): \(label)"
+        case .savedToPool(let rally, let background):
+            return "Saved for training: \(rally) rally + \(background) background clips"
+        case .exported(let output):
+            return "Exported \(output)"
+        case .undo:
+            return "Undid last adjustment"
+        case .redo:
+            return "Redid adjustment"
+        }
+    }
+
+    private func pointLabel(_ id: UUID) -> String {
+        if let point = appState.point(withID: id) {
+            return "#\(point.pointNumber) (\(timestamp(point.start)))"
+        }
+        return "a point"
+    }
+
+    private func timestamp(_ t: TimeInterval) -> String {
+        String(format: "%d:%02d", Int(t) / 60, Int(t) % 60)
+    }
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "internaldrive")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("All versions and adjustments are stored locally on this Mac. Re-analyzing never deletes them — you can always switch back.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Button("Show session folder in Finder") {
+                appState.revealSessionFolder()
+            }
+            .buttonStyle(.link)
+            .font(.caption)
+        }
+        .padding(.top, 4)
     }
 }

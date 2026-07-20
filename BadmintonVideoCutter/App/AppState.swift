@@ -116,6 +116,9 @@ final class AppState: ObservableObject {
     @Published var isShowingFileImporter = false
 
     // MARK: - Session (Corrections Ledger) State
+    /// Analysis run currently loaded for this video (1-based).
+    @Published var currentAnalysisRun: Int = 1
+    @Published var runSummaries: [SessionStore.RunSummary] = []
     @Published var canUndo = false
     @Published var canRedo = false
     /// Points inserted by the user (effective `pointAdded` corrections).
@@ -162,10 +165,9 @@ final class AppState: ObservableObject {
     /// Recount ratings across all sessions (cheap file scan, off-main).
     func refreshRankerRatingCount() {
         let store = sessionStore
-        let root = store.root
         Task {
             let count = await Task.detached {
-                HighlightRanker.collectSamples(store: store, sessionsRoot: root).count
+                HighlightRanker.collectSamples(store: store).count
             }.value
             rankerRatingCount = count
         }
@@ -175,12 +177,11 @@ final class AppState: ObservableObject {
         isTrainingRanker = true
         statusMessage = "Training highlight ranker…"
         let store = sessionStore
-        let root = store.root
 
         Task {
             do {
                 let samples = await Task.detached {
-                    HighlightRanker.collectSamples(store: store, sessionsRoot: root)
+                    HighlightRanker.collectSamples(store: store)
                 }.value
                 rankerRatingCount = samples.count
 
@@ -377,6 +378,10 @@ final class AppState: ObservableObject {
             sessionBaseline = result.sessionBaseline
             sessionEvents = result.sessionEvents
             audioSignals = result.audioSignals
+            if let vid = sessionStore.videoID(for: url) {
+                currentAnalysisRun = sessionStore.currentRun(forVideoID: vid) ?? 1
+            }
+            refreshRunSummaries(for: url)
             refreshSessionDerivedState()
             refreshHighlightScores()
         } else {
@@ -396,6 +401,8 @@ final class AppState: ObservableObject {
             sessionBaseline = nil
             sessionEvents = []
             audioSignals = AudioSignals()
+            currentAnalysisRun = 1
+            runSummaries = []
             refreshSessionDerivedState()
 
             // No in-memory state — try restoring a persisted session from disk.
@@ -409,19 +416,8 @@ final class AppState: ObservableObject {
         guard let loaded = sessionStore.loadSession(for: url),
               !loaded.baseline.games.isEmpty else { return }
 
-        sessionBaseline = loaded.baseline
-        sessionEvents = loaded.events
-        segments = loaded.baseline.segments
-        featureFrames = loaded.frames
-        audioSignals = loaded.audioSignals ?? AudioSignals()
-        serveSides = loaded.baseline.serveSides
-
-        let effective = SessionMaterializer.effectiveCorrections(from: loaded.events)
-        games = SessionMaterializer.apply(events: effective, to: loaded.baseline.games)
-
-        deriveTrimSegments()
-        computeAllScores()
-        refreshSessionDerivedState()
+        applyLoadedSession(loaded)
+        refreshRunSummaries(for: url)
 
         let pointCount = games.reduce(0) { $0 + $1.activePointCount }
         analysisProgress = AnalysisProgress(
@@ -665,11 +661,13 @@ final class AppState: ObservableObject {
                     estimatedTrimPercent: removalStatistics?.trimPercent ?? 0,
                     elapsedSeconds: elapsed
                 )
-                let gameCount = games.count
-                statusMessage = "Analysis complete\(mlStatus): \(rallyCount) points in \(gameCount) game\(gameCount == 1 ? "" : "s") (\(formatElapsed(elapsed)))"
-
-                // Persist the analysis as the session baseline (corrections ledger)
+                // Persist the analysis as a new run (older runs are kept)
                 persistBaseline(for: analyzingURL)
+                let gameCount = games.count
+                let historyNote = currentAnalysisRun > 1
+                    ? " Analysis #\(currentAnalysisRun); earlier versions kept in History — switch back anytime."
+                    : ""
+                statusMessage = "Analysis complete\(mlStatus): \(rallyCount) points in \(gameCount) game\(gameCount == 1 ? "" : "s") (\(formatElapsed(elapsed))).\(historyNote)"
                 sessionStore.saveAudioSignals(audioSignals, for: analyzingURL)
                 // Save results for this video
                 saveCurrentVideoState()
@@ -729,7 +727,7 @@ final class AppState: ObservableObject {
     private func recordEvent(_ event: SessionEvent) {
         guard let url = currentAssetURL else { return }
         sessionEvents.append(event)
-        sessionStore.append(event, for: url)
+        sessionStore.append(event, for: url, run: currentAnalysisRun)
         refreshSessionDerivedState()
     }
 
@@ -1072,7 +1070,7 @@ final class AppState: ObservableObject {
 
     /// Persist a fresh analysis result as the session baseline.
     private func persistBaseline(for url: URL) {
-        sessionBaseline = sessionStore.saveBaseline(
+        let saved = sessionStore.saveBaseline(
             segments: segments,
             games: games,
             serveSides: serveSides,
@@ -1081,8 +1079,66 @@ final class AppState: ObservableObject {
             usedHitModel: hitModelURL != nil,
             for: url
         )
+        sessionBaseline = saved?.baseline
+        currentAnalysisRun = saved?.run ?? 1
+        refreshRunSummaries(for: url)
         sessionEvents = []
         refreshSessionDerivedState()
+    }
+
+    private func refreshRunSummaries(for url: URL) {
+        runSummaries = sessionStore.videoID(for: url)
+            .map { sessionStore.runSummaries(forVideoID: $0) } ?? []
+    }
+
+    /// Number of adjustment events recorded on the current run (for the
+    /// re-analyze confirmation).
+    var currentRunAdjustmentCount: Int {
+        sessionEvents.filter { $0.isCorrection }.count
+    }
+
+    /// Switch the loaded video to another analysis run. All state (points,
+    /// corrections, scores, audio signals) reloads from that run; nothing is
+    /// written except the current-run pointer.
+    func switchToRun(_ run: Int) {
+        guard let url = currentAssetURL,
+              let vid = sessionStore.videoID(for: url),
+              run != currentAnalysisRun,
+              let loaded = sessionStore.loadRun(videoID: vid, run: run) else { return }
+        sessionStore.setCurrentRun(run, forVideoID: vid)
+        applyLoadedSession(loaded)
+        let pointCount = games.reduce(0) { $0 + $1.activePointCount }
+        statusMessage = "Switched to Analysis #\(run) — \(pointCount) points, with your adjustments restored."
+    }
+
+    /// Install a loaded session (any run) as the live state.
+    private func applyLoadedSession(_ loaded: SessionStore.LoadedSession) {
+        sessionBaseline = loaded.baseline
+        sessionEvents = loaded.events
+        currentAnalysisRun = loaded.run
+        segments = loaded.baseline.segments
+        featureFrames = loaded.frames
+        audioSignals = loaded.audioSignals ?? AudioSignals()
+        serveSides = loaded.baseline.serveSides
+
+        let effective = SessionMaterializer.effectiveCorrections(from: loaded.events)
+        games = SessionMaterializer.apply(events: effective, to: loaded.baseline.games)
+
+        deriveTrimSegments()
+        computeAllScores()
+        refreshSessionDerivedState()
+    }
+
+    /// Ledger entries for one run, newest first (History tab).
+    func historyEntries(forRun run: Int) -> [LedgerEntry] {
+        guard let url = currentAssetURL, let vid = sessionStore.videoID(for: url) else { return [] }
+        return sessionStore.ledgerEntries(forVideoID: vid, run: run).reversed()
+    }
+
+    /// Reveal the on-disk session folder (History tab footer).
+    func revealSessionFolder() {
+        guard let url = currentAssetURL, let dir = sessionStore.sessionDirectory(for: url) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([dir])
     }
 
     // MARK: - Serve Detection & Scoring
@@ -1661,9 +1717,8 @@ final class AppState: ObservableObject {
                     audioWeight: sensitivity.audioWeight
                 )
                 let store = sessionStore
-                let sessionsRoot = store.root
                 let candidateMetrics = await Task.detached {
-                    ShadowEvaluator.evaluateCorpus(store: store, sessionsRoot: sessionsRoot, config: config)
+                    ShadowEvaluator.evaluateCorpus(store: store, config: config)
                 }.value
 
                 let currentMeta = hitModelRegistry.currentVersion()

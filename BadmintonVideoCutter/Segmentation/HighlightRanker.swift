@@ -32,50 +32,43 @@ enum HighlightRanker {
 
     // MARK: - Rating Pool (derived entirely from session ledgers)
 
-    /// One sample per rated, non-deleted point across every session on disk.
-    static func collectSamples(store: SessionStore, sessionsRoot: URL) -> [RatedSample] {
-        let fm = FileManager.default
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let ids = try? fm.contentsOfDirectory(atPath: sessionsRoot.path) else { return [] }
-
+    /// One sample per rated, non-deleted point across every analysis run of
+    /// every session — taste data keeps its value across re-analyses.
+    static func collectSamples(store: SessionStore) -> [RatedSample] {
         var samples: [RatedSample] = []
-        for vid in ids.sorted() {
-            let dir = sessionsRoot.appendingPathComponent(vid)
-            guard let baselineData = try? Data(contentsOf: dir.appendingPathComponent("baseline.json")),
-                  let baseline = try? decoder.decode(SessionBaseline.self, from: baselineData),
-                  let framesData = try? Data(contentsOf: dir.appendingPathComponent("frames.json")),
-                  let codable = try? decoder.decode([CodableFrame].self, from: framesData),
-                  !codable.isEmpty else { continue }
+        for vid in store.allVideoIDs() {
+            for run in store.runNumbers(forVideoID: vid) {
+                guard let session = store.loadRun(videoID: vid, run: run),
+                      !session.frames.isEmpty else { continue }
 
-            let events = store.loadLedger(forVideoID: vid)
-                .filter { $0.seq >= baseline.eventSeqAtSave }
-                .map(\.event)
-
-            // Latest rating per point; "none" clears. Ratings are audit events,
-            // so read all of them (not just effective corrections).
-            var ratings: [UUID: Bool] = [:]
-            for event in events {
-                if case .highlightRated(let pointID, let raw) = event {
-                    switch HighlightRating(rawValue: raw) {
-                    case .up: ratings[pointID] = true
-                    case .down: ratings[pointID] = false
-                    case nil: ratings.removeValue(forKey: pointID)
+                // Latest rating per point; "none" clears. Ratings are audit
+                // events, so read all of them (not just effective corrections).
+                var ratings: [UUID: Bool] = [:]
+                for event in session.events {
+                    if case .highlightRated(let pointID, let raw) = event {
+                        switch HighlightRating(rawValue: raw) {
+                        case .up: ratings[pointID] = true
+                        case .down: ratings[pointID] = false
+                        case nil: ratings.removeValue(forKey: pointID)
+                        }
                     }
                 }
-            }
-            guard !ratings.isEmpty else { continue }
+                guard !ratings.isEmpty else { continue }
 
-            let effective = SessionMaterializer.effectiveCorrections(from: events)
-            let points = SessionMaterializer.apply(events: effective, to: baseline.games)
-                .flatMap(\.points)
-                .filter { $0.reviewStatus != .deleted }
-            let frames = codable.map { $0.toFeatureFrame() }
-            let vectors = HighlightScorer.percentileFeatureVectors(points: points, frames: frames)
+                let effective = SessionMaterializer.effectiveCorrections(from: session.events)
+                let points = SessionMaterializer.apply(events: effective, to: session.baseline.games)
+                    .flatMap(\.points)
+                    .filter { $0.reviewStatus != .deleted }
+                let vectors = HighlightScorer.percentileFeatureVectors(
+                    points: points,
+                    frames: session.frames,
+                    onsets: session.audioSignals?.onsets ?? []
+                )
 
-            for point in points {
-                guard let liked = ratings[point.id], let vector = vectors[point.id] else { continue }
-                samples.append(RatedSample(features: vector, liked: liked))
+                for point in points {
+                    guard let liked = ratings[point.id], let vector = vectors[point.id] else { continue }
+                    samples.append(RatedSample(features: vector, liked: liked))
+                }
             }
         }
         return samples
