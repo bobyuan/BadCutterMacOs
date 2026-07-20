@@ -1182,6 +1182,24 @@ final class AppState: ObservableObject {
         refreshSessionDerivedState()
     }
 
+    /// Point labels ("#N (m:ss)") for a run, resolved against that run's own
+    /// materialized points — so history rows stay meaningful for older runs.
+    func pointLabels(forRun run: Int) -> [UUID: String] {
+        guard let url = currentAssetURL,
+              let vid = sessionStore.videoID(for: url),
+              let baseline = sessionStore.loadBaseline(forVideoID: vid, run: run) else { return [:] }
+        let events = sessionStore.ledgerEntries(forVideoID: vid, run: run).map(\.event)
+        let games = SessionMaterializer.apply(
+            events: SessionMaterializer.effectiveCorrections(from: events),
+            to: baseline.games
+        )
+        var labels: [UUID: String] = [:]
+        for point in games.flatMap(\.points) {
+            labels[point.id] = String(format: "#%d (%d:%02d)", point.pointNumber, Int(point.start) / 60, Int(point.start) % 60)
+        }
+        return labels
+    }
+
     /// Ledger entries for one run, newest first (History tab).
     func historyEntries(forRun run: Int) -> [LedgerEntry] {
         guard let url = currentAssetURL, let vid = sessionStore.videoID(for: url) else { return [] }

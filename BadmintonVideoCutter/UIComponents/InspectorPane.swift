@@ -828,6 +828,8 @@ struct ModelsPanel: View {
 /// ledger. Makes "re-analysis never erases anything" visible.
 struct HistoryPanel: View {
     @ObservedObject var appState: AppState
+    /// Per-run point labels, computed lazily per card render.
+    @State private var labelsByRun: [Int: [UUID: String]] = [:]
 
     var body: some View {
         ScrollView {
@@ -893,7 +895,7 @@ struct HistoryPanel: View {
             }
 
             ForEach(Array(entries.prefix(30).enumerated()), id: \.offset) { _, entry in
-                historyRow(entry)
+                historyRow(entry, run: summary.run)
             }
             if entries.count > 30 {
                 Text("… \(entries.count - 30) earlier events")
@@ -903,6 +905,11 @@ struct HistoryPanel: View {
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8).fill(isCurrent ? Color.green.opacity(0.06) : Color.gray.opacity(0.07)))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isCurrent ? Color.green.opacity(0.35) : Color.gray.opacity(0.2)))
+        .onAppear {
+            if labelsByRun[summary.run] == nil {
+                labelsByRun[summary.run] = appState.pointLabels(forRun: summary.run)
+            }
+        }
     }
 
     private func activitySummary(entries: [LedgerEntry]) -> String {
@@ -926,13 +933,13 @@ struct HistoryPanel: View {
         return parts.isEmpty ? "No manual adjustments yet" : parts.joined(separator: " · ")
     }
 
-    private func historyRow(_ entry: LedgerEntry) -> some View {
+    private func historyRow(_ entry: LedgerEntry, run: Int) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: icon(for: entry.event))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .frame(width: 14)
-            Text(describe(entry.event))
+            Text(describe(entry.event, run: run))
                 .font(.caption)
                 .lineLimit(2)
             Spacer()
@@ -958,27 +965,27 @@ struct HistoryPanel: View {
         }
     }
 
-    private func describe(_ event: SessionEvent) -> String {
+    private func describe(_ event: SessionEvent, run: Int) -> String {
         switch event {
         case .analysisRun(let pointCount, let usedHitModel):
             return "Analyzed: \(pointCount) points\(usedHitModel ? " (hit model)" : "")"
         case .pointDeleted(let id):
-            return "Deleted \(pointLabel(id))"
+            return "Deleted \(pointLabel(id, run: run))"
         case .pointRestored(let id):
-            return "Restored \(pointLabel(id))"
+            return "Restored \(pointLabel(id, run: run))"
         case .pointAdded(_, let start, let end):
             return String(format: "Added point %@ – %@", timestamp(start), timestamp(end))
         case .boundaryChanged(let id, let edge, let from, let to):
-            return String(format: "Moved %@ %@ %+.1fs", pointLabel(id), edge == .start ? "start" : "end", to - from)
+            return String(format: "Moved %@ %@ %+.1fs", pointLabel(id, run: run), edge == .start ? "start" : "end", to - from)
         case .highlightRated(let id, let rating):
             switch rating {
-            case "up": return "Rated \(pointLabel(id)) 👍"
-            case "down": return "Rated \(pointLabel(id)) 👎"
-            default: return "Cleared rating on \(pointLabel(id))"
+            case "up": return "Rated \(pointLabel(id, run: run)) 👍"
+            case "down": return "Rated \(pointLabel(id, run: run)) 👎"
+            default: return "Cleared rating on \(pointLabel(id, run: run))"
             }
         case .pointFeedback(let id, let reason):
             let label = PointFeedbackReason(rawValue: reason)?.label ?? reason
-            return "Feedback on \(pointLabel(id)): \(label)"
+            return "Feedback on \(pointLabel(id, run: run)): \(label)"
         case .savedToPool(let rally, let background):
             return "Saved for training: \(rally) rally + \(background) background clips"
         case .exported(let output):
@@ -990,7 +997,10 @@ struct HistoryPanel: View {
         }
     }
 
-    private func pointLabel(_ id: UUID) -> String {
+    private func pointLabel(_ id: UUID, run: Int) -> String {
+        if let label = labelsByRun[run]?[id] {
+            return label
+        }
         if let point = appState.point(withID: id) {
             return "#\(point.pointNumber) (\(timestamp(point.start)))"
         }

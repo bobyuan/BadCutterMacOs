@@ -188,7 +188,7 @@ final class SessionStore {
         }
     }
 
-    private func loadBaseline(forVideoID vid: String, run: Int) -> SessionBaseline? {
+    func loadBaseline(forVideoID vid: String, run: Int) -> SessionBaseline? {
         let url = runDirectory(forVideoID: vid, run: run).appendingPathComponent("baseline.json")
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? Self.decoder.decode(SessionBaseline.self, from: data)
