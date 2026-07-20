@@ -116,6 +116,36 @@ enum PointAdjuster {
         return .adjustStart(to: newStart)
     }
 
+    /// All internal low-activity stretches (>= minBreak, away from the edges)
+    /// within a span — the local re-segmentation used after a play's span is
+    /// extended (an extension can swallow a second rally plus its pause).
+    static func internalBreaks(
+        from start: TimeInterval,
+        to end: TimeInterval,
+        context: Context,
+        minBreak: TimeInterval = 1.0
+    ) -> [(start: TimeInterval, end: TimeInterval)] {
+        guard end - start >= 3 else { return [] }
+        var breaks: [(start: TimeInterval, end: TimeInterval)] = []
+        var dipStart: TimeInterval?
+        var t = start + 0.8
+        while t <= end - 0.8 {
+            if isActive(at: t, context: context) {
+                if let s0 = dipStart {
+                    if t - s0 >= minBreak { breaks.append((s0, t)) }
+                    dipStart = nil
+                }
+            } else if dipStart == nil {
+                dipStart = t
+            }
+            t += 0.2
+        }
+        if let s0 = dipStart, (end - 0.8) - s0 >= minBreak {
+            breaks.append((s0, end - 0.8))
+        }
+        return breaks
+    }
+
     // MARK: - Structural Reasons
 
     /// Two merged points: split at the longest internal low-activity dip.

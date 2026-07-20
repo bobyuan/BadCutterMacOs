@@ -808,6 +808,7 @@ struct TrimOverlayTimelineView: View {
                             }
                         }
                         appState.refreshDerivedAfterBoundaryChange()
+                        appState.suggestSplitIfNeeded(pointID: pointID)
                         tuneDragOrigin = nil
                         tuneDragNeighborOrigin = nil
                     }

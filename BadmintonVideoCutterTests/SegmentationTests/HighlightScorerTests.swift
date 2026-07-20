@@ -281,6 +281,21 @@ final class HighlightScorerTests: XCTestCase {
         XCTAssertGreaterThan(end, 12)
     }
 
+    func testInternalBreaksFindsEachPause() throws {
+        // Span [10, 30]: rallies 10-15, 18-23, 26-30 with pauses between.
+        let ctx = adjusterContext(point: adjusterPoint(10, 30), activeRanges: [10...15, 18...23, 26...30])
+        let breaks = PointAdjuster.internalBreaks(from: 10, to: 30, context: ctx)
+        XCTAssertEqual(breaks.count, 2, "\(breaks)")
+        XCTAssertEqual(breaks[0].start, 15.5, accuracy: 1.0)
+        XCTAssertEqual(breaks[0].end, 17.5, accuracy: 1.0)
+        XCTAssertEqual(breaks[1].start, 23.5, accuracy: 1.0)
+    }
+
+    func testInternalBreaksEmptyForContinuousActivity() {
+        let ctx = adjusterContext(point: adjusterPoint(10, 30), activeRanges: [10...30])
+        XCTAssertTrue(PointAdjuster.internalBreaks(from: 10, to: 30, context: ctx).isEmpty)
+    }
+
     func testAdjusterQuietGapProposesNothing() {
         // No activity in the gap → refuse rather than invent a point.
         let ctx = adjusterContext(point: adjusterPoint(30, 40), activeRanges: [30...40], previousEnd: 0)

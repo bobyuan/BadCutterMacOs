@@ -923,7 +923,12 @@ final class AppState: ObservableObject {
             commitPointBoundary(pointID: pointID, edge: .start, from: from, to: to)
             deriveTrimSegments()
             computeAllScores()
-            statusMessage = String(format: "Start moved %+.1fs (%@).%@ ⌘Z to undo.", to - from, reason.label, suffix)
+            var message = String(format: "Start moved %+.1fs (%@).%@", to - from, reason.label, suffix)
+            if reason == .startsTooLate {
+                let pieces = resegmentPoint(pointID: pointID)
+                if pieces > 1 { message += " Extended span contained \(pieces) rallies — split them." }
+            }
+            statusMessage = message + " ⌘Z to undo."
             return FeedbackOutcome(focusPointID: pointID, ghostStart: from, ghostEnd: nil, autoAdjusted: true)
 
         case .adjustEnd(let to):
@@ -932,7 +937,12 @@ final class AppState: ObservableObject {
             commitPointBoundary(pointID: pointID, edge: .end, from: from, to: to)
             deriveTrimSegments()
             computeAllScores()
-            statusMessage = String(format: "End moved %+.1fs (%@).%@ ⌘Z to undo.", to - from, reason.label, suffix)
+            var message = String(format: "End moved %+.1fs (%@).%@", to - from, reason.label, suffix)
+            if reason == .endsTooEarly {
+                let pieces = resegmentPoint(pointID: pointID)
+                if pieces > 1 { message += " Extended span contained \(pieces) rallies — split them." }
+            }
+            statusMessage = message + " ⌘Z to undo."
             return FeedbackOutcome(focusPointID: pointID, ghostStart: nil, ghostEnd: from, autoAdjusted: true)
 
         case .split(let firstEnd, let secondStart):
@@ -969,15 +979,59 @@ final class AppState: ObservableObject {
         }
         deriveTrimSegments()
         computeAllScores()
-        statusMessage = edge == .end
-            ? "Merged with the next point — the rally continues through it. ⌘Z twice to undo."
-            : "Merged with the previous point — the rally started there. ⌘Z twice to undo."
+        let pieces = resegmentPoint(pointID: target.id)
+        var message = edge == .end
+            ? "Merged with the next point — the rally continues through it."
+            : "Merged with the previous point — the rally started there."
+        if pieces > 1 { message += " The combined span contained \(pieces) rallies — split them." }
+        statusMessage = message + " ⌘Z to walk back."
         return FeedbackOutcome(
             focusPointID: target.id,
             ghostStart: edge == .start ? target.start : nil,
             ghostEnd: edge == .end ? target.end : nil,
             autoAdjusted: true
         )
+    }
+
+    /// Re-run local detection over a point's (possibly extended) span and
+    /// split it at internal breaks — an extension can contain two rallies.
+    /// Returns how many points the span became (1 = unchanged). All splits go
+    /// through the ledger (boundaryChanged + pointAdded), so undo walks back.
+    @discardableResult
+    func resegmentPoint(pointID: UUID) -> Int {
+        guard let target = point(withID: pointID) else { return 1 }
+        let ctx = adjusterContext(for: target)
+        let breaks = PointAdjuster.internalBreaks(from: target.start, to: target.end, context: ctx)
+        guard !breaks.isEmpty else { return 1 }
+
+        var spans: [(start: TimeInterval, end: TimeInterval)] = []
+        var cursor = target.start
+        for gap in breaks {
+            let segmentEnd = gap.start + 0.3
+            if segmentEnd - cursor >= 1.0 { spans.append((cursor, segmentEnd)) }
+            cursor = gap.end - 0.3
+        }
+        if target.end - cursor >= 1.0 { spans.append((cursor, target.end)) }
+        guard spans.count >= 2 else { return 1 }
+
+        let originalEnd = target.end
+        updatePointBoundary(pointID: pointID, newEnd: spans[0].end)
+        commitPointBoundary(pointID: pointID, edge: .end, from: originalEnd, to: spans[0].end)
+        for span in spans.dropFirst() {
+            recordEvent(.pointAdded(pointID: UUID(), start: span.start, end: span.end))
+        }
+        rematerializeFromSession()
+        return spans.count
+    }
+
+    /// After a MANUAL extension, don't auto-split — surface the finding.
+    func suggestSplitIfNeeded(pointID: UUID) {
+        guard let target = point(withID: pointID) else { return }
+        let ctx = adjusterContext(for: target)
+        let count = PointAdjuster.internalBreaks(from: target.start, to: target.end, context: ctx).count
+        if count > 0 {
+            statusMessage = "This play looks like it contains \(count + 1) rallies — right-click it and choose the split option."
+        }
     }
 
     /// Hard limits for dragging/extending a point's boundaries: the previous
