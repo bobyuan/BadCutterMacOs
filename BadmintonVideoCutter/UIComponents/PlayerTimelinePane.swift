@@ -855,6 +855,11 @@ struct TrimOverlayTimelineView: View {
                         }
                         appState.refreshDerivedAfterBoundaryChange()
                         appState.suggestSplitIfNeeded(pointID: pointID)
+                        // Replay the play with its adjusted boundaries so the
+                        // result can be judged immediately.
+                        if let adjusted = appState.point(withID: pointID) {
+                            previewPoint(adjusted)
+                        }
                         tuneDragOrigin = nil
                         tuneDragNeighborOrigin = nil
                     }
