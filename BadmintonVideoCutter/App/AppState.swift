@@ -1172,6 +1172,10 @@ final class AppState: ObservableObject {
         recordEvent(.boundaryChanged(pointID: pointID, edge: edge, from: from, to: to))
         resortAndRenumberPoints()
         refreshHighlightScores()
+        if edge == .start {
+            serveDirtyIDs.insert(pointID)
+            scheduleServeRedetection()
+        }
     }
 
     func undo() {
@@ -1193,6 +1197,7 @@ final class AppState: ObservableObject {
         games = SessionMaterializer.apply(events: effective, to: baseline.games)
         deriveTrimSegments()
         computeAllScores()
+        scheduleServeRedetection()
     }
 
     /// Persist a fresh analysis result as the session baseline.
@@ -1254,6 +1259,7 @@ final class AppState: ObservableObject {
         deriveTrimSegments()
         computeAllScores()
         refreshSessionDerivedState()
+        scheduleServeRedetection()
     }
 
     /// Point labels ("#N (m:ss)") for a run, resolved against that run's own
@@ -1287,6 +1293,36 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Serve Detection & Scoring
+
+    /// Points whose start moved since their serve side was detected.
+    private var serveDirtyIDs: Set<UUID> = []
+    private var serveRedetectTask: Task<Void, Never>?
+
+    /// Incrementally re-detect serve sides for points that are new (splits,
+    /// adds, merges) or whose start moved — the serve frame decides which
+    /// party won, so stale/missing sides corrupt the running score.
+    func scheduleServeRedetection() {
+        serveRedetectTask?.cancel()
+        guard let url = currentAssetURL else { return }
+        serveRedetectTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard let self, !Task.isCancelled, self.currentAssetURL == url else { return }
+            let dirty = self.activePoints.filter {
+                self.serveSides[$0.id] == nil || self.serveDirtyIDs.contains($0.id)
+            }
+            guard !dirty.isEmpty else { return }
+            let sides = await ServeDetector.detectServes(videoURL: url, points: dirty)
+            guard !Task.isCancelled, self.currentAssetURL == url else { return }
+            for (id, side) in sides { self.serveSides[id] = side }
+            self.serveDirtyIDs.subtract(dirty.map(\.id))
+            self.computeAllScores()
+            if var baseline = self.sessionBaseline {
+                baseline.serveSides = self.serveSides
+                self.sessionBaseline = baseline
+                self.sessionStore.rewriteBaseline(baseline, for: url)
+            }
+        }
+    }
 
     func detectServesAndScores() {
         guard let url = currentAssetURL, !games.isEmpty else { return }
