@@ -1826,22 +1826,33 @@ final class AppState: ObservableObject {
                     trainingAccuracy: result.accuracy
                 )
 
-                // Shadow eval: replay every corrected session's cached frames
-                // and score against the user's corrections (DESIGN §3.5).
-                hitModelStatus = .training(progress: "Shadow-evaluating against corrected sessions…")
+                // Shadow eval (D-007 complete): re-score each corrected
+                // session's AUDIO with the candidate model, replay the
+                // pipeline, and score against the user's corrections. The
+                // current model is evaluated the same way for a like-for-like
+                // gate; stored metrics are the fallback when it can't be.
+                hitModelStatus = .training(progress: "Shadow-evaluating candidate vs current (audio re-scored)…")
                 let config = AnalysisConfig(
                     rallyPercentile: sensitivity.rallyPercentile,
                     motionWeight: sensitivity.motionWeight,
                     audioWeight: sensitivity.audioWeight
                 )
                 let store = sessionStore
+                let candidateModelURL = hitModelRegistry.modelURL(forVersion: meta.version)
+                let currentModelURL = hitModelRegistry.currentModelURL()
                 let candidateMetrics = await Task.detached {
-                    ShadowEvaluator.evaluateCorpus(store: store, config: config)
+                    await ShadowEvaluator.evaluateCorpus(store: store, config: config, audioModelURL: candidateModelURL)
                 }.value
+                let currentFresh: ShadowEvalMetrics? = await {
+                    guard let currentModelURL else { return nil }
+                    return await Task.detached {
+                        await ShadowEvaluator.evaluateCorpus(store: store, config: config, audioModelURL: currentModelURL)
+                    }.value
+                }()
 
                 let currentMeta = hitModelRegistry.currentVersion()
                     .flatMap { hitModelRegistry.metadata(forVersion: $0) }
-                let decision = ShadowEval.gate(candidate: candidateMetrics, current: currentMeta?.shadowEval)
+                let decision = ShadowEval.gate(candidate: candidateMetrics, current: currentFresh ?? currentMeta?.shadowEval)
                 meta.shadowEval = candidateMetrics
                 meta.gateDecision = decision
                 try? hitModelRegistry.save(meta)

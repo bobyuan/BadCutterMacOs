@@ -114,6 +114,28 @@ enum ShadowEval {
         return metrics
     }
 
+    /// Replace frames' audioScore with the nearest re-scored window
+    /// (mirrors BasicFeatureExtractor's merge; pure for testing).
+    static func remapAudioScores(frames: [FeatureFrame], features: [AudioFeature]) -> [FeatureFrame] {
+        guard !features.isEmpty else { return frames }
+        let timestamps = features.map(\.timestamp)
+        return frames.map { frame in
+            var updated = frame
+            var low = 0
+            var high = timestamps.count - 1
+            while low < high {
+                let mid = (low + high) / 2
+                if timestamps[mid] < frame.timestamp { low = mid + 1 } else { high = mid }
+            }
+            if low > 0, abs(timestamps[low - 1] - frame.timestamp) < abs(timestamps[low] - frame.timestamp) {
+                updated.audioScore = features[low - 1].rallyScore
+            } else {
+                updated.audioScore = features[low].rallyScore
+            }
+            return updated
+        }
+    }
+
     // MARK: - Promotion Gate
 
     struct GateDecision: Codable, Equatable {
@@ -158,17 +180,22 @@ enum ShadowEval {
 
 // MARK: - Corpus Replay
 
-/// Replays every corrected session's cached frames through the segmentation
-/// pipeline and scores the output against the user's corrected points.
-/// Cheap (no video decode) — the regression corpus from DESIGN §3.1.
+/// Replays every corrected session through the segmentation pipeline and
+/// scores the output against the user's corrected points — the regression
+/// corpus from DESIGN §3.1. With `audioModelURL` set (D-007 complete), each
+/// session's AUDIO is re-scored through that hit model first (audio-only
+/// decode, no video), so candidate and current models produce genuinely
+/// different metrics; sessions whose video file is missing fall back to the
+/// cached audio scores.
 enum ShadowEvaluator {
 
     /// Sessions eligible for evaluation: each video's CURRENT run (the user's
     /// authoritative version) with at least one effective correction.
     static func evaluateCorpus(
         store: SessionStore,
-        config: AnalysisConfig
-    ) -> ShadowEvalMetrics {
+        config: AnalysisConfig,
+        audioModelURL: URL? = nil
+    ) async -> ShadowEvalMetrics {
         var results: [ShadowEval.SessionResult] = []
         for vid in store.allVideoIDs() {
             guard let run = store.currentRun(forVideoID: vid),
@@ -184,7 +211,16 @@ enum ShadowEvaluator {
                 if case .pointAdded(let pointID, _, _) = event { added.insert(pointID) }
             }
 
-            let predicted = runPipeline(frames: session.frames, config: config)
+            var frames = session.frames
+            if let audioModelURL,
+               let path = store.meta(forVideoID: vid)?.filePath,
+               FileManager.default.fileExists(atPath: path),
+               let features = try? await HitClassifier.classify(
+                   videoURL: URL(fileURLWithPath: path), modelURL: audioModelURL) {
+                frames = ShadowEval.remapAudioScores(frames: frames, features: features)
+            }
+
+            let predicted = runPipeline(frames: frames, config: config)
             results.append(ShadowEval.evaluate(predicted: predicted, groundTruth: truth, addedPointIDs: added))
         }
         return ShadowEval.aggregate(results)

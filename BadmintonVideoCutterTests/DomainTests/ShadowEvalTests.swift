@@ -67,6 +67,26 @@ final class ShadowEvalTests: XCTestCase {
         XCTAssertEqual(m.addedPointRecall, 0.5, accuracy: 0.001)
     }
 
+    // MARK: - Audio Re-Scoring (D-007)
+
+    func testRemapAudioScoresUsesNearestWindow() {
+        let frames = [0.0, 0.4, 0.6, 1.1, 5.0].map {
+            FeatureFrame(timestamp: $0, motionScore: 0.1, audioScore: 0.99)
+        }
+        let features = [
+            AudioFeature(timestamp: 0.25, rmsEnergy: 0, isOnset: false, rallyScore: 0.1),
+            AudioFeature(timestamp: 0.75, rmsEnergy: 0, isOnset: false, rallyScore: 0.5),
+            AudioFeature(timestamp: 1.25, rmsEnergy: 0, isOnset: false, rallyScore: 0.9)
+        ]
+        let remapped = ShadowEval.remapAudioScores(frames: frames, features: features)
+        XCTAssertEqual(remapped.map(\.audioScore), [0.1, 0.1, 0.5, 0.9, 0.9])
+        // Other fields untouched
+        XCTAssertEqual(remapped[0].motionScore, 0.1)
+        // Empty features → unchanged
+        XCTAssertEqual(ShadowEval.remapAudioScores(frames: frames, features: []).map(\.audioScore),
+                       frames.map(\.audioScore))
+    }
+
     // MARK: - Gate
 
     private func metrics(f1TP tp: Int, fp: Int, fn: Int, addedTotal: Int = 0, addedFound: Int = 0) -> ShadowEvalMetrics {

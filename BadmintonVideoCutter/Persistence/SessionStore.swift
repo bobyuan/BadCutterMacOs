@@ -293,7 +293,7 @@ final class SessionStore {
         // Meta
         let sessionDir = sessionDirectory(forVideoID: vid)
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64).flatMap { $0 } ?? 0
-        let meta = SessionMeta(videoID: vid, fileName: url.lastPathComponent, fileSize: fileSize, lastOpened: Date())
+        let meta = SessionMeta(videoID: vid, fileName: url.lastPathComponent, fileSize: fileSize, lastOpened: Date(), filePath: url.path)
         if let metaData = try? Self.prettyEncoder.encode(meta) {
             try? metaData.write(to: sessionDir.appendingPathComponent("meta.json"))
         }
@@ -337,10 +337,11 @@ final class SessionStore {
         guard let targetRun = run ?? currentRun(forVideoID: vid),
               let session = loadRun(videoID: vid, run: targetRun) else { return nil }
 
-        // Touch lastOpened
+        // Touch lastOpened + record the path (backfills pre-D-007 sessions)
         let dir = sessionDirectory(forVideoID: vid)
         if var meta = try? Self.decoder.decode(SessionMeta.self, from: Data(contentsOf: dir.appendingPathComponent("meta.json"))) {
             meta.lastOpened = Date()
+            meta.filePath = url.path
             if let metaData = try? Self.prettyEncoder.encode(meta) {
                 try? metaData.write(to: dir.appendingPathComponent("meta.json"))
             }
@@ -371,6 +372,13 @@ final class SessionStore {
             frames: frames,
             audioSignals: audioSignals
         )
+    }
+
+    /// Identity record for a session (nil when never analyzed).
+    func meta(forVideoID vid: String) -> SessionMeta? {
+        let url = sessionDirectory(forVideoID: vid).appendingPathComponent("meta.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? Self.decoder.decode(SessionMeta.self, from: data)
     }
 
     /// All videoIDs that have at least one run on disk.

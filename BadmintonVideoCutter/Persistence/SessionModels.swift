@@ -72,6 +72,9 @@ struct SessionMeta: Codable {
     var fileName: String
     var fileSize: Int64
     var lastOpened: Date
+    /// Last known absolute path — lets shadow eval re-read the audio track
+    /// without the video being open (D-007). Optional: pre-existing metas.
+    var filePath: String?
 }
 
 // MARK: - Feature Frame Cache Bridge

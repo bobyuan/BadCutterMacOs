@@ -114,3 +114,15 @@ independent once the user switches back and keeps editing an older run.
 history); seq-window-only event assignment (breaks when editing resumes on an older
 run); auto-pruning old runs (violates the "never erases" promise; disk cost is a few
 MB per run).
+
+## D-007 addendum · 2026-07-20 · Candidate-audio shadow eval implemented
+
+The deferral is resolved. Shadow evaluation now re-scores each corrected
+session's **audio** through the model under evaluation (`HitClassifier` over the
+file recorded in `meta.json.filePath` — audio-only decode, no video), remaps the
+window scores onto the cached frames, and replays the pipeline. The candidate
+AND the currently promoted model are both evaluated this way, so the gate
+compares like-for-like fresh metrics; stored metrics remain the fallback when
+the current model or a video file is unavailable (those sessions fall back to
+cached audio scores). Enabled by Phase 8's audio-only extraction path plus the
+new `filePath` in session meta (backfilled whenever a session is opened).
