@@ -597,6 +597,11 @@ struct TrimOverlayTimelineView: View {
                         .fill(Color.green.opacity(0.5))
                         .frame(width: max(1, w), height: height)
                         .offset(x: x)
+                        .contextMenu {
+                            Button("Split play at playhead") {
+                                appState.splitPlay(at: playheadTime)
+                            }
+                        }
                 }
 
                 // Trim overlays (red, semi-transparent) with drag handles

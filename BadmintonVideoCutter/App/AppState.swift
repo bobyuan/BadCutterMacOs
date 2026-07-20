@@ -1024,6 +1024,26 @@ final class AppState: ObservableObject {
         return spans.count
     }
 
+    /// Split the active play containing `time` into two points exactly there
+    /// (playhead right-click). Ledger: boundaryChanged + pointAdded; ⌘Z twice
+    /// walks it back.
+    func splitPlay(at time: TimeInterval) {
+        guard let target = activePoints.first(where: { time > $0.start && time < $0.end }) else {
+            statusMessage = "Place the playhead inside a play to split it."
+            return
+        }
+        guard time - target.start >= 0.5, target.end - time >= 0.5 else {
+            statusMessage = "Too close to the boundary — move the playhead at least 0.5s into the play."
+            return
+        }
+        let originalEnd = target.end
+        updatePointBoundary(pointID: target.id, newEnd: time)
+        commitPointBoundary(pointID: target.id, edge: .end, from: originalEnd, to: time)
+        recordEvent(.pointAdded(pointID: UUID(), start: time, end: originalEnd))
+        rematerializeFromSession()
+        statusMessage = String(format: "Split at %d:%02d into two plays. ⌘Z twice to undo.", Int(time) / 60, Int(time) % 60)
+    }
+
     /// After a MANUAL extension, don't auto-split — surface the finding.
     func suggestSplitIfNeeded(pointID: UUID) {
         guard let target = point(withID: pointID) else { return }
