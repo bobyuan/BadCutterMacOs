@@ -24,6 +24,9 @@ enum SessionEvent: Codable, Equatable {
     /// Manual serve-side correction (score/party fix). Audit-only; wins over
     /// automatic detection permanently for that point.
     case serveSideOverridden(pointID: UUID, side: String)
+    /// Manual winner for the match's FINAL play (no next serve encodes it).
+    /// Mid-game winner overrides are stored as the next play's serve pin.
+    case pointWinnerOverridden(pointID: UUID, side: String)
     case savedToPool(rallyClips: Int, backgroundClips: Int)
     case exported(output: String)
     case undo

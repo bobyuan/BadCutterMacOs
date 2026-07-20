@@ -198,11 +198,9 @@ struct PointListView: View {
                                     },
                                     isBatchSelected: batchSelection.contains(point.id),
                                     isOverlapping: appState.overlappingPointIDs.contains(point.id),
-                                    serveSide: appState.effectiveServeSide(for: point.id),
-                                    serveLabelA: appState.serveMenuLabels(for: game).left,
-                                    serveLabelB: appState.serveMenuLabels(for: game).right,
-                                    onOverrideServe: { side in
-                                        appState.overrideServeSide(pointID: point.id, side: side)
+                                    winnerIsA: appState.winnerIsA(of: point.id),
+                                    onOverrideWinner: { isA in
+                                        appState.overrideWinner(pointID: point.id, winnerIsA: isA)
                                     },
                                     onRecalculateScore: {
                                         appState.recalculateScores(fromPointID: point.id)
@@ -262,11 +260,9 @@ struct PointListView: View {
                     },
                     isBatchSelected: batchSelection.contains(entry.point.id),
                     isOverlapping: appState.overlappingPointIDs.contains(entry.point.id),
-                    serveSide: appState.effectiveServeSide(for: entry.point.id),
-                    serveLabelA: appState.serveMenuLabels(for: entry.game).left,
-                    serveLabelB: appState.serveMenuLabels(for: entry.game).right,
-                    onOverrideServe: { side in
-                        appState.overrideServeSide(pointID: entry.point.id, side: side)
+                    winnerIsA: appState.winnerIsA(of: entry.point.id),
+                    onOverrideWinner: { isA in
+                        appState.overrideWinner(pointID: entry.point.id, winnerIsA: isA)
                     },
                     onRecalculateScore: {
                         appState.recalculateScores(fromPointID: entry.point.id)
@@ -344,10 +340,8 @@ struct PointRow: View {
     var onFeedback: ((PointFeedbackReason) -> Void)?
     var isBatchSelected: Bool = false
     var isOverlapping: Bool = false
-    var serveSide: ServeDetector.ServeSide?
-    var serveLabelA = "Side A"
-    var serveLabelB = "Side B"
-    var onOverrideServe: ((ServeDetector.ServeSide) -> Void)?
+    var winnerIsA: Bool?
+    var onOverrideWinner: ((Bool) -> Void)?
     var onRecalculateScore: (() -> Void)?
     let onTap: () -> Void
 
@@ -481,21 +475,21 @@ struct PointRow: View {
                     }
                 }
             }
-            if point.reviewStatus != .deleted, let onOverrideServe {
-                Menu("Score wrong — who serves?") {
-                    // Native checkmark on the currently-believed server, so
-                    // "pick the other one" is a single obvious click.
-                    Toggle("\(serveLabelA) serves", isOn: Binding(
-                        get: { serveSide == .left },
-                        set: { _ in onOverrideServe(.left) }
+            if point.reviewStatus != .deleted, let onOverrideWinner {
+                Menu("Score wrong — who won this play?") {
+                    // Native checkmark on the currently-scored winner, so
+                    // correcting is one click on the other row.
+                    Toggle("Side A won", isOn: Binding(
+                        get: { winnerIsA == true },
+                        set: { _ in onOverrideWinner(true) }
                     ))
-                    Toggle("\(serveLabelB) serves", isOn: Binding(
-                        get: { serveSide == .right },
-                        set: { _ in onOverrideServe(.right) }
+                    Toggle("Side B won", isOn: Binding(
+                        get: { winnerIsA == false },
+                        set: { _ in onOverrideWinner(false) }
                     ))
-                    if serveSide == nil || serveSide == .unknown {
+                    if winnerIsA == nil {
                         Divider()
-                        Text("Server not detected yet for this play")
+                        Text("Winner not determined yet")
                     }
                 }
                 Button("Recalculate score from here") { onRecalculateScore?() }

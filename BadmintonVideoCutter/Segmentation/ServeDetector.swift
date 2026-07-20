@@ -181,7 +181,8 @@ final class ServeDetector {
         points: [GamePoint],
         serveSides: [UUID: ServeSide],
         nextGameFirstServe: ServeSide? = nil,
-        firstServe explicitFirstServe: ServeSide? = nil
+        firstServe explicitFirstServe: ServeSide? = nil,
+        lastPointWinner: ServeSide? = nil
     ) -> [UUID: PointScore] {
         let activePoints = points.filter { $0.reviewStatus != .deleted }
         guard !activePoints.isEmpty else { return [:] }
@@ -217,10 +218,12 @@ final class ServeDetector {
             if winnerSide != .unknown {
                 if winnerSide == firstServe { scoreA += 1 } else { scoreB += 1 }
             } else if i == activePoints.count - 1 {
-                // Last point with no following game: leader likely won;
-                // tie → the server wins the guess.
+                // Last point with no following game: an explicit winner
+                // override decides; else leader likely won; tie → server.
                 let currentServe = serveSides[activePoints[i].id] ?? .unknown
-                if scoreA != scoreB {
+                if let lastPointWinner, lastPointWinner != .unknown {
+                    if lastPointWinner == firstServe { scoreA += 1 } else { scoreB += 1 }
+                } else if scoreA != scoreB {
                     if scoreA > scoreB { scoreA += 1 } else { scoreB += 1 }
                 } else if currentServe != .unknown, currentServe != firstServe {
                     scoreB += 1

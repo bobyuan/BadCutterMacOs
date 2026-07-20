@@ -132,6 +132,8 @@ final class AppState: ObservableObject {
     /// Manual serve-side corrections, derived from the ledger; they win over
     /// automatic detection permanently.
     @Published var serveOverrides: [UUID: ServeDetector.ServeSide] = [:]
+    /// Manual winner for the match's final play (side of the winner).
+    @Published var winnerOverrides: [UUID: ServeDetector.ServeSide] = [:]
     private var sessionBaseline: SessionBaseline?
     private var sessionEvents: [SessionEvent] = []
     private let sessionStore = SessionStore.shared
@@ -797,6 +799,7 @@ final class AppState: ObservableObject {
         // and undo/redo never touches them.
         var ratings: [UUID: HighlightRating] = [:]
         var overrides: [UUID: ServeDetector.ServeSide] = [:]
+        var winners: [UUID: ServeDetector.ServeSide] = [:]
         for event in sessionEvents {
             if case .highlightRated(let pointID, let raw) = event {
                 if let rating = HighlightRating(rawValue: raw) {
@@ -809,9 +812,14 @@ final class AppState: ObservableObject {
                let side = ServeDetector.ServeSide(rawValue: raw) {
                 overrides[pointID] = side
             }
+            if case .pointWinnerOverridden(let pointID, let raw) = event,
+               let side = ServeDetector.ServeSide(rawValue: raw) {
+                winners[pointID] = side
+            }
         }
         pointRatings = ratings
         serveOverrides = overrides
+        winnerOverrides = winners
     }
 
     /// Derived review state for the point-list chip.
@@ -1358,6 +1366,41 @@ final class AppState: ObservableObject {
         return (aIsLeft ? "Side A" : "Side B", aIsLeft ? "Side B" : "Side A")
     }
 
+    /// Who won a play under the current scores (true = Side A), derived by
+    /// comparing its score row with the previous play's.
+    func winnerIsA(of pointID: UUID) -> Bool? {
+        guard let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }),
+              let score = pointScores[pointID] else { return nil }
+        let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+        guard let idx = active.firstIndex(where: { $0.id == pointID }) else { return nil }
+        let previous = idx > 0 ? pointScores[active[idx - 1].id] : ServeDetector.PointScore(scoreA: 0, scoreB: 0)
+        guard let prev = previous else { return nil }
+        if score.scoreA > prev.scoreA { return true }
+        if score.scoreB > prev.scoreB { return false }
+        return nil
+    }
+
+    /// Manual winner correction, in the user's A/B vocabulary. Winner of play
+    /// N = server of play N+1, so mid-game this pins the NEXT play's serve;
+    /// only the match's final play needs its own winner event.
+    func overrideWinner(pointID: UUID, winnerIsA: Bool) {
+        guard let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }) else { return }
+        let anchor = anchorSide(for: game) ?? .left
+        let winnerSide: ServeDetector.ServeSide = winnerIsA ? anchor : (anchor == .left ? .right : .left)
+
+        let allActive = activePoints
+        guard let idx = allActive.firstIndex(where: { $0.id == pointID }) else { return }
+        if idx < allActive.count - 1 {
+            recordEvent(.serveSideOverridden(pointID: allActive[idx + 1].id, side: winnerSide.rawValue))
+        } else {
+            recordEvent(.pointWinnerOverridden(pointID: pointID, side: winnerSide.rawValue))
+        }
+        computeAllScores()
+        if let number = point(withID: pointID)?.pointNumber {
+            statusMessage = "Play #\(number) winner set to Side \(winnerIsA ? "A" : "B") — scores recalculated."
+        }
+    }
+
     /// The A/B label for one side within the game containing a point.
     func serveABLabel(_ side: ServeDetector.ServeSide, forPointID pointID: UUID) -> String {
         guard let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }) else {
@@ -1459,11 +1502,14 @@ final class AppState: ObservableObject {
                 nextGameFirstServe = nil
             }
 
+            let lastActive = game.points.filter { $0.reviewStatus != .deleted }
+                .max(by: { $0.start < $1.start })
             let scores = ServeDetector.computeScores(
                 points: game.points,
                 serveSides: serveSides.merging(serveOverrides) { _, manual in manual },
                 nextGameFirstServe: nextGameFirstServe,
-                firstServe: anchorSide(for: game)
+                firstServe: anchorSide(for: game),
+                lastPointWinner: lastActive.flatMap { winnerOverrides[$0.id] }
             )
             allScores.merge(scores) { _, new in new }
         }
