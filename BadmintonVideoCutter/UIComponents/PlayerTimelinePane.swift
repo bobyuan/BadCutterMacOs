@@ -190,6 +190,8 @@ struct PlayerTimelinePane: View {
                 case "n": rateSelected(.down); return nil
                 case "x": toggleDeleteSelected(); return nil
                 case " ":
+                    // In split mode nothing may start playback.
+                    if controller.splitMode { return nil }
                     // Replay the selected point; without a selection let the
                     // player keep its play/pause behavior.
                     if controller.selectedPointID != nil {
@@ -608,6 +610,9 @@ struct TrimOverlayTimelineView: View {
                         .offset(x: x)
                         .contextMenu {
                             Button("Split play here…") {
+                                // Freeze playback: in split mode the frame
+                                // follows the knob only.
+                                appState.player?.pause()
                                 splitMode = true
                                 appState.statusMessage = "Split mode — move the mouse to the exact moment, click to split. Esc cancels."
                             }
