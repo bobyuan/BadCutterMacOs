@@ -1055,6 +1055,21 @@ final class AppState: ObservableObject {
         statusMessage = String(format: "Split at %d:%02d into two plays. ⌘Z twice to undo.", Int(time) / 60, Int(time) % 60)
     }
 
+    /// Right-click: refresh scores from a play onward WITHOUT re-analysis —
+    /// clears detected serve sides from there (pinned overrides survive),
+    /// re-detects them (a few frame reads), and recomputes the score chain.
+    func recalculateScores(fromPointID pointID: UUID) {
+        guard let target = point(withID: pointID) else { return }
+        let affected = activePoints.filter { $0.start >= target.start - 0.01 }
+        for p in affected where serveOverrides[p.id] == nil {
+            serveSides.removeValue(forKey: p.id)
+            serveDirtyIDs.insert(p.id)
+        }
+        computeAllScores()
+        scheduleServeRedetection()
+        statusMessage = "Re-detecting serves for \(affected.count) plays from #\(target.pointNumber) — scores refresh in a moment."
+    }
+
     /// After a MANUAL extension, don't auto-split — surface the finding.
     func suggestSplitIfNeeded(pointID: UUID) {
         guard let target = point(withID: pointID) else { return }

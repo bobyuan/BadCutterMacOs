@@ -144,10 +144,16 @@ final class ShadowEvalTests: XCTestCase {
             points[0].id: .left, points[1].id: .left, points[2].id: .right, points[3].id: .left
         ]
         let scores = ServeDetector.computeScores(points: points, serveSides: sides)
-        XCTAssertEqual(scores[points[0].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (1, 0))
-        XCTAssertEqual(scores[points[1].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (1, 1))
-        XCTAssertEqual(scores[points[2].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (2, 1))
-        XCTAssertEqual(scores[points[3].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (3, 1))
+        assertScore(scores[points[0].id], 1, 0)
+        assertScore(scores[points[1].id], 1, 1)
+        assertScore(scores[points[2].id], 2, 1)
+        assertScore(scores[points[3].id], 3, 1)
+    }
+
+    private func assertScore(_ score: ServeDetector.PointScore?, _ a: Int, _ b: Int,
+                             file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(score?.scoreA, a, file: file, line: line)
+        XCTAssertEqual(score?.scoreB, b, file: file, line: line)
     }
 
     func testScoreUnknownCurrentServeStillResolvedByNextServe() {
@@ -160,11 +166,11 @@ final class ShadowEvalTests: XCTestCase {
         ]
         let scores = ServeDetector.computeScores(points: points, serveSides: sides, nextGameFirstServe: .right)
         // p1: next serve unknown -> leader guess (tied -> A) -> 1:0
-        XCTAssertEqual(scores[points[0].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (1, 0))
+        assertScore(scores[points[0].id], 1, 0)
         // p2: winner = server of p3 = B -> 1:1
-        XCTAssertEqual(scores[points[1].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (1, 1))
+        assertScore(scores[points[1].id], 1, 1)
         // p3: winner = next game first serve = B -> 1:2
-        XCTAssertEqual(scores[points[2].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (1, 2))
+        assertScore(scores[points[2].id], 1, 2)
     }
 
     // MARK: - Model Registry

@@ -204,6 +204,9 @@ struct PointListView: View {
                                     onOverrideServe: { side in
                                         appState.overrideServeSide(pointID: point.id, side: side)
                                     },
+                                    onRecalculateScore: {
+                                        appState.recalculateScores(fromPointID: point.id)
+                                    },
                                     onTap: {
                                         handleTap(on: point)
                                     }
@@ -264,6 +267,9 @@ struct PointListView: View {
                     serveLabelB: appState.serveMenuLabels(for: entry.game).right,
                     onOverrideServe: { side in
                         appState.overrideServeSide(pointID: entry.point.id, side: side)
+                    },
+                    onRecalculateScore: {
+                        appState.recalculateScores(fromPointID: entry.point.id)
                     },
                     onTap: {
                         handleTap(on: entry.point)
@@ -342,6 +348,7 @@ struct PointRow: View {
     var serveLabelA = "Side A"
     var serveLabelB = "Side B"
     var onOverrideServe: ((ServeDetector.ServeSide) -> Void)?
+    var onRecalculateScore: (() -> Void)?
     let onTap: () -> Void
 
     private var progress: Double {
@@ -479,6 +486,7 @@ struct PointRow: View {
                     Button(serveSide == .left ? "✓ \(serveLabelA) serves" : "\(serveLabelA) serves") { onOverrideServe(.left) }
                     Button(serveSide == .right ? "✓ \(serveLabelB) serves" : "\(serveLabelB) serves") { onOverrideServe(.right) }
                 }
+                Button("Recalculate score from here") { onRecalculateScore?() }
             }
             Divider()
             Button(point.reviewStatus == .deleted ? "Restore" : "Delete", action: onToggleDelete)
