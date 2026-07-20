@@ -180,14 +180,19 @@ final class ServeDetector {
     static func computeScores(
         points: [GamePoint],
         serveSides: [UUID: ServeSide],
-        nextGameFirstServe: ServeSide? = nil
+        nextGameFirstServe: ServeSide? = nil,
+        firstServe explicitFirstServe: ServeSide? = nil
     ) -> [UUID: PointScore] {
         let activePoints = points.filter { $0.reviewStatus != .deleted }
         guard !activePoints.isEmpty else { return [:] }
 
-        // Determine player A = the side that serves first in this game.
+        // Player A = the side that serves the game's FIRST point. Callers
+        // should pass it explicitly so score columns and UI labels share one
+        // anchor; the fallback infers from the earliest known side.
         let firstServe: ServeSide
-        if let known = activePoints.first(where: { serveSides[$0.id] != nil && serveSides[$0.id] != .unknown }) {
+        if let explicitFirstServe, explicitFirstServe != .unknown {
+            firstServe = explicitFirstServe
+        } else if let known = activePoints.first(where: { serveSides[$0.id] != nil && serveSides[$0.id] != .unknown }) {
             firstServe = serveSides[known.id]!
         } else {
             return [:]

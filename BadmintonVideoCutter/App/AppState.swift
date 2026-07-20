@@ -1333,12 +1333,28 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// The side that anchors "A" for a game — strictly the FIRST active
+    /// point's effective side; only if that is unknown, the earliest known
+    /// side. Single source of truth for score columns and A/B labels.
+    func anchorSide(for game: Game) -> ServeDetector.ServeSide? {
+        let active = game.points.filter { $0.reviewStatus != .deleted }
+        if let first = active.first,
+           let side = effectiveServeSide(for: first.id), side != .unknown {
+            return side
+        }
+        for point in active {
+            if let side = effectiveServeSide(for: point.id), side != .unknown {
+                return side
+            }
+        }
+        return nil
+    }
+
     /// A/B labels aligned with the score columns: "Side A" is the party that
     /// served the game's first point (the score reads A:B). The physical
     /// position stays as a hint, e.g. "Side A (far)".
     func serveMenuLabels(for game: Game) -> (left: String, right: String) {
-        let firstSide = game.points.first(where: { $0.reviewStatus != .deleted })
-            .flatMap { effectiveServeSide(for: $0.id) } ?? .left
+        let firstSide = anchorSide(for: game) ?? .left
         let aIsLeft = firstSide != .right
         let left = "\(aIsLeft ? "Side A" : "Side B") (\(serveSideLabel(.left).lowercased()))"
         let right = "\(aIsLeft ? "Side B" : "Side A") (\(serveSideLabel(.right).lowercased()))"
@@ -1435,7 +1451,8 @@ final class AppState: ObservableObject {
             let scores = ServeDetector.computeScores(
                 points: game.points,
                 serveSides: serveSides.merging(serveOverrides) { _, manual in manual },
-                nextGameFirstServe: nextGameFirstServe
+                nextGameFirstServe: nextGameFirstServe,
+                firstServe: anchorSide(for: game)
             )
             allScores.merge(scores) { _, new in new }
         }

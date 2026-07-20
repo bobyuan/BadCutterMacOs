@@ -173,6 +173,22 @@ final class ShadowEvalTests: XCTestCase {
         assertScore(scores[points[2].id], 1, 2)
     }
 
+    func testScoreColumnsAnchorToExplicitFirstServer() {
+        // First point's serve undetected; later serves are all .right.
+        // Without an explicit anchor, A would silently re-anchor to .right.
+        // With firstServe = .left (the true first server), every win by the
+        // .right party must land in column B.
+        let points = scorePoints(3)
+        let sides: [UUID: ServeDetector.ServeSide] = [
+            points[1].id: .right, points[2].id: .right
+        ]
+        let scores = ServeDetector.computeScores(
+            points: points, serveSides: sides, nextGameFirstServe: .right, firstServe: .left)
+        assertScore(scores[points[0].id], 0, 1)   // winner = server of p2 = right = B
+        assertScore(scores[points[1].id], 0, 2)
+        assertScore(scores[points[2].id], 0, 3)
+    }
+
     // MARK: - Model Registry
 
     private func makeTempDir() throws -> URL {
