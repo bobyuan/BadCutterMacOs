@@ -119,9 +119,17 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
       ramps, fade capped at half the shortest segment; verified: reel duration
       shrank by exactly 10 fades and a boundary frame shows the blend)
 
-## Phase 8 — ML Upgrades
+## Phase 8 — ML Upgrades ✅
 
-- [ ] Per DESIGN.md §5 recommendations (pending research)
+- [x] vDSP audio-onset hit timing (`AudioSignalExtractor.detectOnsets`: RMS
+      envelope → rectified flux → adaptive threshold; fused into `HitDetector`
+      in place of quantized audio edges; cached per session as `audio.json`)
+- [x] Crowd-excitement signal (`SNClassifySoundRequest` .version1
+      applause/cheering/crowd → cheer timeline → 90/10 blend into highlight
+      scores, heuristic and ranker paths alike)
+- [x] Goldens preserved (cached-frames replay passes no audio signals)
+- [ ] Deferred (watch-list per §5.2): TrackNetV4/WASB/BST swaps; D-007
+      candidate-audio shadow re-scoring; venue profiles (§3.6 step 2)
 
 ---
 
@@ -138,3 +146,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | 2026-07-19 | **Phase 5 complete** (`3edc392`). ExportPlan/ExportOutput models, HighlightScorer.select policies, job-based VideoExporter with passthrough+fallback, rebuilt Export panel (reel toggles, selection slider, estimates, results). **Full E2E verified via UI automation on IMG_6155.rallies.mov**: import → analyze (11 pts) → chips/👍(confirmed chip)/score-sort/top-K → Add Point (added chip, renumber, rescore) → ⌘Z undo (rating survives) → dual-reel export (h264 passthrough, 65.1s + 22.0s, sizes shown). Known polish: point rows too cramped at min inspector width (chips/badges wrap). |
 | 2026-07-19 | **Phase 6 complete** (`4a8e1c7`). ModelRegistry (vNNN dirs + current pointer, legacy migration verified live in app), ShadowEval engine + promotion gate, trainFromPool now train→register→shadow-eval→gate→promote/hold, Models panel version list w/ metrics + promote/revert. 19 shuttle-primary constants lifted into AnalysisConfig, defaults pinned by test suites (all green incl. goldens). Limitation noted: shadow replay can't yet re-score audio with a candidate model (needs audio re-extraction — Phase 8). |
 | 2026-07-19 | **Phase 7 complete** (`1ffe670`). HighlightRanker (ledger-derived rating pool → MLLinearRegressor → concordance-gated registry rollout; heuristic fallback), score overlay + crossfade in a new composed VideoExporter path (A/B tracks, audio ramps). Debug win: CATextLayer renders blank inside AVVideoCompositionCoreAnimationTool — replaced with pre-rendered CGImage badge. E2E on restored session: 60.5s reel (10 fades applied), "1:0" badge at 2s, mid-blend + "2:0" at 5.45s. Ranker awaits 30 real ratings for live exercise. |
+| 2026-07-19 | **Phase 8 complete** (`64d7b41`) — **all 8 phases done**. AudioSignalExtractor: vDSP onsets + built-in-classifier cheer timeline, one audio pass per analysis, session-cached. HitDetector fuses precise onsets; cheer blends 90/10 into scores. Verified live on fresh 22s analysis (72 onsets, 43 cheer samples, quiet-gym max 0.079). Inspector widened — point rows finally fit on one line. Also discovered: user analyzed IMG_8510 + rated 2 points overnight in the stale app instance — ledger captured everything (rating pool now 3 across 2 videos). Batch "Analyze Selected" skips already-done videos (restored sessions count as done) — a force-reanalyze affordance may be wanted later. |
