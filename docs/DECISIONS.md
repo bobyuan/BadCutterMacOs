@@ -82,3 +82,19 @@ becomes stricter over time.
 **Rejected:** Full re-extraction per candidate (minutes per video, defeats "seconds,
 no video decode"); skipping the gate until Phase 8 (loses the registry/eval plumbing
 and the regression corpus that Phase 7's ranker also needs).
+
+## D-008 · 2026-07-19 · 👎 reasons split taste from detection complaints
+
+**Decision:** The thumbs-down is a menu of reasons. Only "Not highlight-worthy"
+records a `highlightRated: down` (the ranker's taste pool). Boundary/detection
+reasons (starts too early/late, ends too early/late, should split, missed point
+before, not a point) record an audit `pointFeedback` event and are fixed via
+ordinary correction events (`boundaryChanged`/`pointAdded`/`pointDeleted`).
+**Why:** A 👎 about wrong boundaries poisons the taste ranker (it would learn
+e.g. "long points are bad" when the point merely had trailing dead time). As
+corrections, these fixes land in the shadow-eval ground truth automatically,
+and the reason labels aggregate into config tuning signal (recurring
+"startsTooEarly" ⇒ pre-roll too generous — future venue profiles, §3.6).
+**Rejected:** One 👎 meaning both things (ambiguous label, polluted pool);
+preview-before-apply for auto-fixes (doubles clicks; ⌘Z + ghost boundary
+already make the applied fix inspectable and reversible).

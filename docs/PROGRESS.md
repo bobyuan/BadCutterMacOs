@@ -133,6 +133,14 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ---
 
+## Post-v2 — Feedback-Driven Adjustment ✅
+
+- [x] 👎 reason menu (8 reasons; taste vs detection split per D-008)
+- [x] `PointAdjuster` auto-fix engine (7 unit tests; refuses low-evidence fixes)
+- [x] Tune UI: zoom-to-point, ghost boundaries, per-edge play/nudge/set-here,
+      Undo/Done — all via ledger
+- [x] Live-verified: decline path, auto-fix path (−10.4s start move), ⌘Z restore
+
 ## History
 
 | Date | What happened |
@@ -147,3 +155,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | 2026-07-19 | **Phase 6 complete** (`4a8e1c7`). ModelRegistry (vNNN dirs + current pointer, legacy migration verified live in app), ShadowEval engine + promotion gate, trainFromPool now train→register→shadow-eval→gate→promote/hold, Models panel version list w/ metrics + promote/revert. 19 shuttle-primary constants lifted into AnalysisConfig, defaults pinned by test suites (all green incl. goldens). Limitation noted: shadow replay can't yet re-score audio with a candidate model (needs audio re-extraction — Phase 8). |
 | 2026-07-19 | **Phase 7 complete** (`1ffe670`). HighlightRanker (ledger-derived rating pool → MLLinearRegressor → concordance-gated registry rollout; heuristic fallback), score overlay + crossfade in a new composed VideoExporter path (A/B tracks, audio ramps). Debug win: CATextLayer renders blank inside AVVideoCompositionCoreAnimationTool — replaced with pre-rendered CGImage badge. E2E on restored session: 60.5s reel (10 fades applied), "1:0" badge at 2s, mid-blend + "2:0" at 5.45s. Ranker awaits 30 real ratings for live exercise. |
 | 2026-07-19 | **Phase 8 complete** (`64d7b41`) — **all 8 phases done**. AudioSignalExtractor: vDSP onsets + built-in-classifier cheer timeline, one audio pass per analysis, session-cached. HitDetector fuses precise onsets; cheer blends 90/10 into scores. Verified live on fresh 22s analysis (72 onsets, 43 cheer samples, quiet-gym max 0.079). Inspector widened — point rows finally fit on one line. Also discovered: user analyzed IMG_8510 + rated 2 points overnight in the stale app instance — ledger captured everything (rating pool now 3 across 2 videos). Batch "Analyze Selected" skips already-done videos (restored sessions count as done) — a force-reanalyze affordance may be wanted later. |
+| 2026-07-19 | **Feedback-driven adjustment** (`ad78bb2`, on main post-merge). 👎 → reason menu; PointAdjuster auto-fixes boundaries from presence/motion/onsets; tune bar with ghost boundaries; D-008 keeps detection complaints out of the ranker pool. Live-verified both the decline path and a −10.4s auto-fix + undo. |
