@@ -451,3 +451,39 @@ config nudges ("3× 'starts too early' on this venue → reduce pre-roll?"),
 surfaced in the Models panel, feeding the venue profiles of §3.6. Also: after
 a review session with ≥3 corrections on a video not in the training pool,
 suggest "Save for Training" in the status bar.
+
+## 9. Post-v2 features (delivered; design recorded retroactively)
+
+### 9.1 Feedback-driven point adjustment (D-008)
+
+The 👎 is a menu of reasons. "Not highlight-worthy" is pure taste (ranker
+pool); seven detection reasons (missed point before, starts/ends too
+early/late, should split, not a point) record an audit `pointFeedback` event
+and trigger an automatic fix through ordinary correction events — signal-based
+first (`PointAdjuster`: presence/motion/onset evidence), fixed-nudge fallback
+when evidence is exhausted, and flush-neighbor merge when there is no room to
+extend. Every fix zooms a tune UI (ghost boundaries, per-edge audition,
+nudges, orange grabbers that ripple-push neighbors) and auto-auditions the
+changed boundary. Reasons aggregate into the Models panel's Feedback Signals
+(→ venue profiles, §3.6).
+
+### 9.2 Analysis history — versioned runs (D-009)
+
+Every analysis persists as an immutable `runs/rNNN/` (baseline + frames +
+audio) with a `current` pointer; the shared append-only ledger tags events
+with their run. Re-analysis is confirmed with "keep history" language, never
+deletes, and older runs restore exactly — including the corrections made on
+them. Surfaced via the History inspector tab (per-run cards + full adjustment
+audit trail + local-storage guarantee) and an always-visible version pill
+(orange when viewing an older run). Ranker ratings pool across all runs;
+shadow eval uses each video's current run.
+
+### 9.3 Invariants hardened after real use
+
+- Boundary edits clamp against active neighbors at the single choke point;
+  manual grabber drags ripple-push the neighbor instead (min 0.5s kept, both
+  edits ledger-committed).
+- Points re-sort chronologically + renumber after every boundary commit and
+  during replay; surviving overlaps (pre-fix data) get a red ⚠️ repair badge.
+- `SessionStore` is thread-safe (main + detached scans); background scans run
+  only after video switches complete.
