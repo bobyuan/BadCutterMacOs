@@ -158,3 +158,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | 2026-07-19 | **Feedback-driven adjustment** (`ad78bb2`, on main post-merge). 👎 → reason menu; PointAdjuster auto-fixes boundaries from presence/motion/onsets; tune bar with ghost boundaries; D-008 keeps detection complaints out of the ranker pool. Live-verified both the decline path and a −10.4s auto-fix + undo. |
 | 2026-07-20 | **Tune-handle + scrub + feedback-escalation fixes** (`05ad3e9`). Orange boundary handles on the tuned point drag past the current boundary (neighbor-clamped); playhead scrub knob + drag-to-scrub on the trim strip; repeated 👎 reasons always act — fixed fallback nudge when the signal declines, and flush-neighbor merge (absorb next/previous point) for ends-too-early / starts-too-late. Live-verified flush merge + double-undo. |
 | 2026-07-20 | **Analysis history** (`fb8f9ac`). Versioned runs (runs/rNNN + current pointer, run-tagged ledger, auto-migration of flat sessions), History inspector tab (per-run cards + full adjustment audit trail + local-storage guarantee), version pill w/ switcher + orange "(older)" state, re-analyze confirmation ("keep history" in the button). Ranker pool spans all runs; shadow corpus uses current run (D-009). Live-verified: migration, re-analysis → r002 with r001 untouched, switch-back restoring hand-tuned state. |
+
+## Review-Loop Upgrades (DESIGN §8)
+
+- [ ] 8.1 Keyboard review mode (j/k/space/u/n/x)
+- [ ] 8.2 Auto-audition after feedback fixes
+- [ ] 8.3 Automatic ranker training (debounced + gated + activation notice)
+- [ ] 8.4 Context menus (row + timeline gap)
+- [ ] 8.5 Batch verdicts (multi-select)
+- [ ] 8.6 Reason aggregation → config suggestions + save-for-training nudge

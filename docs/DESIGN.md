@@ -380,3 +380,74 @@ Each phase = one or more commits on `v2-redesign`, tracked in
   ledgers).
 - Highlight scorer gets golden tests over the 5 cached videos (top-3 points stable).
 - `xcodebuild clean` before test runs (stale-build gotcha).
+
+## 8. Review-loop interaction upgrades (2026-07-20)
+
+Post-v2 audit of the feedback/manual-adjustment loop. Goal: make the daily
+review pass (watch → verdict → fix → next) as close to keyboard-speed as the
+detection quality allows, and let learning happen without ceremony.
+
+### 8.1 Keyboard review mode
+
+Reviewing N points must not cost N mouse trips. With a video loaded:
+
+| Key | Action |
+|---|---|
+| `j` / `↓` | Select + preview the next point |
+| `k` / `↑` | Select + preview the previous point |
+| `space` | Replay the selected point |
+| `u` | 👍 the selected point |
+| `n` | 👎 the selected point (taste — "Not highlight-worthy") |
+| `x` | Delete / restore the selected point |
+| `a` | Add point at playhead (existing) |
+
+Selection drives everything already (grabbers, tune bar, chips), so the keys
+are thin wrappers over existing actions. Detection-reason 👎 stays in the menu
+(it needs a reason choice).
+
+### 8.2 Auto-audition after adjustments
+
+The moment a feedback fix (or merge/insert) lands, automatically play ~3s
+around the changed boundary. The user immediately hears/sees whether the fix
+is right and can nudge or ⌘Z without any extra click. Implemented via the
+timeline controller's play-window handler; applies to feedback fixes only
+(manual drags/nudges don't interrupt).
+
+### 8.3 Automatic ranker training (debounced, gated, announced)
+
+No per-rating retraining: scores reshuffling mid-review is disorienting, and
+freshness is worth less than stability. Instead:
+
+- Auto-train in the background when the pool first reaches 30 ratings, and
+  after every +10 ratings beyond the last trained count (tracked in
+  UserDefaults).
+- Only at natural pauses: video switch or opening the Models panel — never
+  mid-review.
+- The existing concordance gate still decides promotion; a worse candidate is
+  trained but held, visible in the Models panel with its reason.
+- **Activation is announced**: the first time a ranker is promoted, the status
+  bar says scores are now personal ("Scores now ranked by your taste — N
+  ratings; revert in Models"), because silently changing every star value
+  reads as a bug.
+- The manual Train button remains as an override.
+- The hit model stays manual (minutes-long training); the automation there is
+  a save-for-training suggestion after a heavily corrected video (8.6).
+
+### 8.4 Context menus (follow-up)
+
+Right-click a point row → Play / 👍 / 👎 reasons / Delete / Tune. Right-click
+a red gap in the timeline → "Add point in this gap" (sized by the gap's
+high-audio window, no playhead positioning needed).
+
+### 8.5 Batch verdicts (follow-up)
+
+Multi-select in the point list (⌘-click / ⇧-click) + one delete/rate for the
+selection — for clearing runs of warm-up false positives.
+
+### 8.6 Feedback-reason aggregation → config suggestions (follow-up)
+
+Aggregate `pointFeedback` reasons across sessions; recurring complaints map to
+config nudges ("3× 'starts too early' on this venue → reduce pre-roll?"),
+surfaced in the Models panel, feeding the venue profiles of §3.6. Also: after
+a review session with ≥3 corrections on a video not in the training pool,
+suggest "Save for Training" in the status bar.
