@@ -31,6 +31,8 @@ final class AppState: ObservableObject {
 
     // MARK: - Serve & Score State
     @Published var serveSides: [UUID: ServeDetector.ServeSide] = [:]
+    /// Which frame axis separates the parties (drives Near/Far vs Left/Right labels).
+    @Published var serveAxis: ServeDetector.Axis = .horizontal
     @Published var pointScores: [UUID: ServeDetector.PointScore] = [:]
 
     // MARK: - Highlight State
@@ -1261,6 +1263,7 @@ final class AppState: ObservableObject {
         featureFrames = loaded.frames
         audioSignals = loaded.audioSignals ?? AudioSignals()
         serveSides = loaded.baseline.serveSides
+        serveAxis = loaded.baseline.serveAxis ?? .horizontal
 
         let effective = SessionMaterializer.effectiveCorrections(from: loaded.events)
         games = SessionMaterializer.apply(events: effective, to: loaded.baseline.games)
@@ -1303,6 +1306,18 @@ final class AppState: ObservableObject {
 
     // MARK: - Serve Detection & Scoring
 
+    /// Human label for a side under the detected camera orientation:
+    /// horizontal split → Left/Right; vertical split → Far (top) / Near (bottom).
+    func serveSideLabel(_ side: ServeDetector.ServeSide) -> String {
+        switch (side, serveAxis) {
+        case (.left, .horizontal): return "Left side"
+        case (.right, .horizontal): return "Right side"
+        case (.left, .vertical): return "Far side"
+        case (.right, .vertical): return "Near side"
+        case (.unknown, _): return "Unknown"
+        }
+    }
+
     /// The serve side scoring will use for a point (override beats detection).
     func effectiveServeSide(for pointID: UUID) -> ServeDetector.ServeSide? {
         serveOverrides[pointID] ?? serveSides[pointID]
@@ -1313,7 +1328,7 @@ final class AppState: ObservableObject {
     func overrideServeSide(pointID: UUID, side: ServeDetector.ServeSide) {
         recordEvent(.serveSideOverridden(pointID: pointID, side: side.rawValue))
         computeAllScores()
-        statusMessage = "Serve side pinned to \(side.rawValue) — scores recalculated."
+        statusMessage = "Serve pinned to \(serveSideLabel(side).lowercased()) — scores recalculated."
     }
 
     /// Points whose start moved since their serve side was detected.
@@ -1352,14 +1367,16 @@ final class AppState: ObservableObject {
         let allPoints = games.flatMap(\.points)
 
         Task {
-            let sides = await ServeDetector.detectServes(videoURL: url, points: allPoints)
-            self.serveSides = sides
+            let detection = await ServeDetector.detectServesWithAxis(videoURL: url, points: allPoints)
+            self.serveSides = detection.sides
+            self.serveAxis = detection.axis
             computeAllScores()
 
             // Serve detection finishes after the baseline is saved — fold the
             // sides into the persisted baseline so restored sessions have them.
             if var baseline = sessionBaseline {
-                baseline.serveSides = sides
+                baseline.serveSides = detection.sides
+                baseline.serveAxis = detection.axis
                 sessionBaseline = baseline
                 sessionStore.rewriteBaseline(baseline, for: url)
             }

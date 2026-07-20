@@ -10,6 +10,13 @@ final class ServeDetector {
         case unknown
     }
 
+    /// Which frame axis separates the two parties. Horizontal camera setups
+    /// split left|right; end-of-court setups split near|far (vertical).
+    enum Axis: String, Codable, Sendable {
+        case horizontal
+        case vertical
+    }
+
     struct PointScore: Sendable {
         var scoreA: Int  // First server's score
         var scoreB: Int  // Other player's score
@@ -24,8 +31,12 @@ final class ServeDetector {
     /// Adapts to any camera angle — uses whichever spatial axis (X or Y)
     /// best separates the two players.
     static func detectServes(videoURL: URL, points: [GamePoint]) async -> [UUID: ServeSide] {
+        await detectServesWithAxis(videoURL: videoURL, points: points).sides
+    }
+
+    static func detectServesWithAxis(videoURL: URL, points: [GamePoint]) async -> (sides: [UUID: ServeSide], axis: Axis) {
         let pointData = points.map { (id: $0.id, start: $0.start) }
-        guard !pointData.isEmpty else { return [:] }
+        guard !pointData.isEmpty else { return ([:], .horizontal) }
 
         return await Task.detached {
             let asset = AVURLAsset(url: videoURL)
@@ -61,7 +72,7 @@ final class ServeDetector {
             }
 
             guard centroids.count >= 2 else {
-                return Dictionary(uniqueKeysWithValues: centroids.map { ($0.id, ServeSide.unknown) })
+                return (Dictionary(uniqueKeysWithValues: centroids.map { ($0.id, ServeSide.unknown) }), .horizontal)
             }
 
             // Step 2: Determine which axis best separates the two players
@@ -71,7 +82,8 @@ final class ServeDetector {
             let yVariance = variance(yValues)
 
             // Use the axis with more spread
-            let values = xVariance >= yVariance ? xValues : yValues
+            let axis: Axis = xVariance >= yVariance ? .horizontal : .vertical
+            let values = axis == .horizontal ? xValues : yValues
             let sortedValues = values.sorted()
             let median = sortedValues[sortedValues.count / 2]
 
@@ -92,7 +104,7 @@ final class ServeDetector {
                 }
             }
 
-            return results
+            return (results, axis)
         }.value
     }
 

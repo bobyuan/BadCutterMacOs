@@ -67,6 +67,8 @@ struct SessionBaseline: Codable {
     var segments: [TimeSegment] = []
     var games: [Game] = []
     var serveSides: [UUID: ServeDetector.ServeSide] = [:]
+    /// Frame axis that separates the parties (nil on pre-axis baselines).
+    var serveAxis: ServeDetector.Axis?
 }
 
 /// Identity record for a session directory.
