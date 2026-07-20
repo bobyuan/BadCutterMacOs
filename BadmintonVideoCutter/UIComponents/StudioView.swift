@@ -42,8 +42,11 @@ final class TimelineController: ObservableObject {
         selectedPointID = point.id
         self.ghostStart = ghostStart
         self.ghostEnd = ghostEnd
-        let lo = max(0, min(point.start, ghostStart ?? point.start) - 8)
-        let hi = min(videoDuration, max(point.end, ghostEnd ?? point.end) + 8)
+        let spanStart = min(point.start, ghostStart ?? point.start)
+        let spanEnd = max(point.end, ghostEnd ?? point.end)
+        let margin = max(2.0, (spanEnd - spanStart) * 0.2)
+        let lo = max(0, spanStart - margin)
+        let hi = min(videoDuration, spanEnd + margin)
         viewport.visibleStart = lo
         viewport.visibleEnd = hi
         viewport.zoom = max(1.0, videoDuration / max(1, hi - lo))

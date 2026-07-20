@@ -352,11 +352,13 @@ struct PlayerTimelinePane: View {
         player.seek(to: startCM, toleranceBefore: .zero, toleranceAfter: .zero)
         controller.playheadTime = point.start
 
-        // Zoom the timeline to the point ± context so the selected play (and
-        // its grabbers) fill the strip instead of staying a sliver at 1x.
+        // Adaptive zoom: the play fills ~70% of the strip whatever its length
+        // (margin scales with duration, min 2s of drag-room per side), so a
+        // 3s play and a 30s play both get comfortable drag distances.
         let totalDuration = appState.videoMetadata?.duration ?? 60
-        let lo = max(0, point.start - 8)
-        let hi = min(totalDuration, point.end + 8)
+        let margin = max(2.0, point.duration * 0.2)
+        let lo = max(0, point.start - margin)
+        let hi = min(totalDuration, point.end + margin)
         controller.viewport.visibleStart = lo
         controller.viewport.visibleEnd = hi
         controller.viewport.zoom = max(1.0, totalDuration / max(1, hi - lo))
