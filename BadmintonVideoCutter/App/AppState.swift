@@ -1351,14 +1351,11 @@ final class AppState: ObservableObject {
     }
 
     /// A/B labels aligned with the score columns: "Side A" is the party that
-    /// served the game's first point (the score reads A:B). The physical
-    /// position stays as a hint, e.g. "Side A (far)".
+    /// served the game's first point (the score reads A:B).
     func serveMenuLabels(for game: Game) -> (left: String, right: String) {
         let firstSide = anchorSide(for: game) ?? .left
         let aIsLeft = firstSide != .right
-        let left = "\(aIsLeft ? "Side A" : "Side B") (\(serveSideLabel(.left).lowercased()))"
-        let right = "\(aIsLeft ? "Side B" : "Side A") (\(serveSideLabel(.right).lowercased()))"
-        return (left, right)
+        return (aIsLeft ? "Side A" : "Side B", aIsLeft ? "Side B" : "Side A")
     }
 
     /// The A/B label for one side within the game containing a point.
