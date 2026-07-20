@@ -124,6 +124,49 @@ final class ShadowEvalTests: XCTestCase {
         XCTAssertTrue(ShadowEval.gate(candidate: candidate, current: current).promote)
     }
 
+    // MARK: - Score chain (winner of N = server of N+1)
+
+    private func scorePoints(_ count: Int) -> [GamePoint] {
+        (0..<count).map { i in
+            GamePoint(pointNumber: i + 1, rallySegment: TimeSegment(
+                start: Double(i) * 10, end: Double(i) * 10 + 8, label: .rally, confidence: 1))
+        }
+    }
+
+    func testScoreFollowsNextServer() {
+        // Serves: A A B A  (A = left, serves first)
+        // Winner of p1 = server of p2 = A -> 1:0
+        // Winner of p2 = server of p3 = B -> 1:1
+        // Winner of p3 = server of p4 = A -> 2:1
+        // p4 last, no next game -> leader (A) -> 3:1
+        let points = scorePoints(4)
+        let sides: [UUID: ServeDetector.ServeSide] = [
+            points[0].id: .left, points[1].id: .left, points[2].id: .right, points[3].id: .left
+        ]
+        let scores = ServeDetector.computeScores(points: points, serveSides: sides)
+        XCTAssertEqual(scores[points[0].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (1, 0))
+        XCTAssertEqual(scores[points[1].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (1, 1))
+        XCTAssertEqual(scores[points[2].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (2, 1))
+        XCTAssertEqual(scores[points[3].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (3, 1))
+    }
+
+    func testScoreUnknownCurrentServeStillResolvedByNextServe() {
+        // p2's own serve is unknown, but p1's winner comes from p2... p1's
+        // winner needs p2's serve (unknown -> leader guess), while p2's winner
+        // comes from p3's KNOWN serve — the direct rule still scores it.
+        let points = scorePoints(3)
+        let sides: [UUID: ServeDetector.ServeSide] = [
+            points[0].id: .left, points[2].id: .right
+        ]
+        let scores = ServeDetector.computeScores(points: points, serveSides: sides, nextGameFirstServe: .right)
+        // p1: next serve unknown -> leader guess (tied -> A) -> 1:0
+        XCTAssertEqual(scores[points[0].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (1, 0))
+        // p2: winner = server of p3 = B -> 1:1
+        XCTAssertEqual(scores[points[1].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (1, 1))
+        // p3: winner = next game first serve = B -> 1:2
+        XCTAssertEqual(scores[points[2].id].map { ($0.scoreA, $0.scoreB) } ?? (0, 0), (1, 2))
+    }
+
     // MARK: - Model Registry
 
     private func makeTempDir() throws -> URL {

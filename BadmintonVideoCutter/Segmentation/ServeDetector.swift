@@ -198,40 +198,32 @@ final class ServeDetector {
         var results: [UUID: PointScore] = [:]
 
         for i in 0..<activePoints.count {
-            let currentServe = serveSides[activePoints[i].id] ?? .unknown
-
-            // Determine who won this point by checking who serves next
-            let nextServe: ServeSide
+            // Rally scoring: the winner of point N is exactly the side that
+            // serves point N+1. Using only the NEXT serve (not the transition)
+            // means one misdetected side corrupts one point, not two, and a
+            // point whose own serve is unknown still scores correctly.
+            let winnerSide: ServeSide
             if i < activePoints.count - 1 {
-                // Find next point with a known serve
-                nextServe = serveSides[activePoints[i + 1].id] ?? .unknown
-            } else if let ngs = nextGameFirstServe {
-                nextServe = ngs
+                winnerSide = serveSides[activePoints[i + 1].id] ?? .unknown
             } else {
-                // Last point of match — infer winner: whoever is behind likely lost,
-                // so the leading player won. If tied, server wins.
-                if scoreA != scoreB {
-                    if scoreA > scoreB { scoreA += 1 } else { scoreB += 1 }
-                } else {
-                    let serverIsA = (currentServe == firstServe)
-                    if serverIsA { scoreA += 1 } else { scoreB += 1 }
-                }
-                results[activePoints[i].id] = PointScore(scoreA: scoreA, scoreB: scoreB)
-                continue
+                winnerSide = nextGameFirstServe ?? .unknown
             }
 
-            if currentServe != .unknown && nextServe != .unknown {
-                let serverIsA = (currentServe == firstServe)
-                if currentServe == nextServe {
-                    // Server won this point
-                    if serverIsA { scoreA += 1 } else { scoreB += 1 }
+            if winnerSide != .unknown {
+                if winnerSide == firstServe { scoreA += 1 } else { scoreB += 1 }
+            } else if i == activePoints.count - 1 {
+                // Last point with no following game: leader likely won;
+                // tie → the server wins the guess.
+                let currentServe = serveSides[activePoints[i].id] ?? .unknown
+                if scoreA != scoreB {
+                    if scoreA > scoreB { scoreA += 1 } else { scoreB += 1 }
+                } else if currentServe != .unknown, currentServe != firstServe {
+                    scoreB += 1
                 } else {
-                    // Receiver won this point
-                    if serverIsA { scoreB += 1 } else { scoreA += 1 }
+                    scoreA += 1
                 }
             } else {
-                // Can't determine winner — assume the leading player won,
-                // or if tied, increment A (arbitrary but keeps score moving)
+                // Next serve unknown mid-game — best guess: leader won.
                 if scoreA >= scoreB { scoreA += 1 } else { scoreB += 1 }
             }
 
