@@ -98,3 +98,19 @@ and the reason labels aggregate into config tuning signal (recurring
 **Rejected:** One 👎 meaning both things (ambiguous label, polluted pool);
 preview-before-apply for auto-fixes (doubles clicks; ⌘Z + ghost boundary
 already make the applied fix inspectable and reversible).
+
+## D-009 · 2026-07-20 · Analysis runs are immutable versions sharing one ledger
+
+**Decision:** Re-analysis writes a new `runs/rNNN/` (baseline+frames+audio) and moves a
+`current.json` pointer; older runs are never modified or deleted. The ledger stays a
+single append-only file with entries tagged by run; a run's state = its baseline + its
+own events. The ranker's rating pool reads ALL runs (taste transfers); the shadow-eval
+corpus reads each video's CURRENT run only (one authoritative ground truth per video).
+**Why:** Users hand-tune a given analysis; an overwrite destroys that investment and
+makes re-analysis feel dangerous. Immutable runs + a visible History tab make
+re-analysis safe *and legibly safe*. Run-tagging (not seq windows) keeps versions
+independent once the user switches back and keeps editing an older run.
+**Rejected:** Copy-on-reanalyze of the whole session dir (duplicates the ledger, forks
+history); seq-window-only event assignment (breaks when editing resumes on an older
+run); auto-pruning old runs (violates the "never erases" promise; disk cost is a few
+MB per run).
