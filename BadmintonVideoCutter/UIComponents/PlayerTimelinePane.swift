@@ -78,7 +78,8 @@ struct PlayerTimelinePane: View {
                         selectedPointID: $controller.selectedPointID,
                         ghostStart: controller.ghostStart,
                         ghostEnd: controller.ghostEnd,
-                        splitMode: $controller.splitMode
+                        splitMode: $controller.splitMode,
+                        onBoundaryAdjusted: { adjusted in previewPoint(adjusted) }
                     )
                     .frame(height: 60)
                     .background(ScrollWheelHandler { deltaX in scrollViewport(deltaX: deltaX) })
@@ -580,6 +581,8 @@ struct TrimOverlayTimelineView: View {
     var ghostStart: TimeInterval?
     var ghostEnd: TimeInterval?
     @Binding var splitMode: Bool
+    /// Called after a grabber drag commits, with the adjusted point.
+    var onBoundaryAdjusted: ((GamePoint) -> Void)?
 
     // Boundary-drag tracking for ledger commits (one drag at a time)
     @State private var dragPointID: UUID?
@@ -858,7 +861,7 @@ struct TrimOverlayTimelineView: View {
                         // Replay the play with its adjusted boundaries so the
                         // result can be judged immediately.
                         if let adjusted = appState.point(withID: pointID) {
-                            previewPoint(adjusted)
+                            onBoundaryAdjusted?(adjusted)
                         }
                         tuneDragOrigin = nil
                         tuneDragNeighborOrigin = nil
