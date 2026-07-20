@@ -352,12 +352,14 @@ struct PlayerTimelinePane: View {
         player.seek(to: startCM, toleranceBefore: .zero, toleranceAfter: .zero)
         controller.playheadTime = point.start
 
-        // Scroll viewport to center on the point segment
+        // Zoom the timeline to the point ± context so the selected play (and
+        // its grabbers) fill the strip instead of staying a sliver at 1x.
         let totalDuration = appState.videoMetadata?.duration ?? 60
-        let pointCenter = (point.start + point.end) / 2
-        let halfVisible = controller.viewport.visibleDuration / 2
-        controller.viewport.visibleStart = max(0, min(pointCenter - halfVisible, totalDuration - controller.viewport.visibleDuration))
-        controller.viewport.visibleEnd = controller.viewport.visibleStart + controller.viewport.visibleDuration
+        let lo = max(0, point.start - 8)
+        let hi = min(totalDuration, point.end + 8)
+        controller.viewport.visibleStart = lo
+        controller.viewport.visibleEnd = hi
+        controller.viewport.zoom = max(1.0, totalDuration / max(1, hi - lo))
 
         // Remove any existing boundary observer
         if let obs = previewBoundaryObserver {
