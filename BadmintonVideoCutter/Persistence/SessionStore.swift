@@ -19,6 +19,9 @@ final class SessionStore {
     static let shared = SessionStore()
 
     let root: URL
+    /// Guards the two caches below — the store is used from the main thread
+    /// and from detached scans (ranker pool, shadow eval) concurrently.
+    private let cacheLock = NSLock()
     private var videoIDCache: [URL: String] = [:]
     private var nextSeqCache: [String: Int] = [:]
 
@@ -78,7 +81,10 @@ final class SessionStore {
     /// Content-based ID stable across file renames/moves:
     /// SHA256(first 64KB + last 64KB + file size), truncated to 16 hex chars.
     func videoID(for url: URL) -> String? {
-        if let cached = videoIDCache[url] { return cached }
+        cacheLock.lock()
+        let cached = videoIDCache[url]
+        cacheLock.unlock()
+        if let cached { return cached }
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
 
@@ -97,7 +103,9 @@ final class SessionStore {
         hasher.update(data: Data("\(size)".utf8))
         let digest = hasher.finalize()
         let id = String(digest.map { String(format: "%02x", $0) }.joined().prefix(16))
+        cacheLock.lock()
         videoIDCache[url] = id
+        cacheLock.unlock()
         return id
     }
 
@@ -209,15 +217,22 @@ final class SessionStore {
         } else {
             try? data.write(to: ledgerURL)
         }
+        cacheLock.lock()
         nextSeqCache[vid] = seq + 1
+        cacheLock.unlock()
         return seq
     }
 
     /// The seq the next appended event will get.
     func nextSeq(forVideoID vid: String) -> Int {
-        if let cached = nextSeqCache[vid] { return cached }
+        cacheLock.lock()
+        let cached = nextSeqCache[vid]
+        cacheLock.unlock()
+        if let cached { return cached }
         let next = (loadLedger(forVideoID: vid).last?.seq).map { $0 + 1 } ?? 0
+        cacheLock.lock()
         nextSeqCache[vid] = next
+        cacheLock.unlock()
         return next
     }
 

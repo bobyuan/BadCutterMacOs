@@ -341,8 +341,6 @@ final class AppState: ObservableObject {
     func selectVideo(url: URL) {
         // Save current video state before switching
         saveCurrentVideoState()
-        // Natural pause: a good moment for debounced ranker training (§8.3).
-        refreshRankerRatingCount(thenAutoTrain: true)
 
         currentAssetURL = url
         player = AVPlayer(url: url)
@@ -356,6 +354,10 @@ final class AppState: ObservableObject {
             Task { await probeMetadata(url: url) }
         }
         loadCalibrationData()
+
+        // Natural pause: debounced ranker training (§8.3) — after the switch
+        // finishes, so the background scan never races the session load.
+        refreshRankerRatingCount(thenAutoTrain: true)
     }
 
     func saveCurrentVideoState() {
