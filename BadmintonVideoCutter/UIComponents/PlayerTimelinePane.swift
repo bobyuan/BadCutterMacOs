@@ -76,7 +76,8 @@ struct PlayerTimelinePane: View {
                         playheadTime: $controller.playheadTime,
                         selectedPointID: $controller.selectedPointID,
                         ghostStart: controller.ghostStart,
-                        ghostEnd: controller.ghostEnd
+                        ghostEnd: controller.ghostEnd,
+                        tuningPointID: controller.tuningPointID
                     )
                     .frame(height: 60)
                     .background(ScrollWheelHandler { deltaX in scrollViewport(deltaX: deltaX) })
@@ -476,10 +477,13 @@ struct TrimOverlayTimelineView: View {
     @Binding var selectedPointID: UUID?
     var ghostStart: TimeInterval?
     var ghostEnd: TimeInterval?
+    var tuningPointID: UUID?
 
     // Boundary-drag tracking for ledger commits (one drag at a time)
     @State private var dragPointID: UUID?
     @State private var dragOriginValue: TimeInterval?
+    // Tuned-point handle drag origin (start or end value at drag begin)
+    @State private var tuneDragOrigin: TimeInterval?
 
     var body: some View {
         GeometryReader { geo in
@@ -592,19 +596,41 @@ struct TrimOverlayTimelineView: View {
                         .allowsHitTesting(false)
                 }
 
-                // Playhead
+                // Tuned-point boundary handles: big, orange, and free to drag
+                // past the current boundary (clamped only by the neighbors).
+                if let tuningID = tuningPointID, let tuned = appState.point(withID: tuningID) {
+                    tuneHandle(edge: .start, pointID: tuningID, time: tuned.start, width: width, height: height)
+                    tuneHandle(edge: .end, pointID: tuningID, time: tuned.end, width: width, height: height)
+                }
+
+                // Playhead + scrub knob
                 let px = timeToX(playheadTime, width: width)
                 Rectangle()
                     .fill(Color.white)
                     .frame(width: 2, height: height)
                     .offset(x: px)
                     .allowsHitTesting(false)
+                Circle()
+                    .fill(Color.white)
+                    .overlay(Circle().stroke(Color.black.opacity(0.4), lineWidth: 1))
+                    .frame(width: 13, height: 13)
+                    .offset(x: px - 5.5, y: -height / 2 + 7)
+                    .gesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named("trimTimeline"))
+                            .onChanged { value in scrubTo(xToTime(value.location.x, width: width)) }
+                    )
             }
+            .coordinateSpace(name: "trimTimeline")
             .contentShape(Rectangle())
             .onTapGesture { location in
                 let time = xToTime(location.x, width: width)
                 seekTo(time)
             }
+            // Drag anywhere on the strip (not on a handle) to scrub.
+            .gesture(
+                DragGesture(minimumDistance: 3, coordinateSpace: .named("trimTimeline"))
+                    .onChanged { value in scrubTo(xToTime(value.location.x, width: width)) }
+            )
         }
     }
 
@@ -615,6 +641,53 @@ struct TrimOverlayTimelineView: View {
                 .map(\.rallySegment)
         }
         return appState.segments.filter { $0.label == .rally }
+    }
+
+    /// Orange draggable boundary for the point being tuned. Unlike the trim
+    /// handles, it can extend outward past the current boundary, clamped only
+    /// by the neighboring points.
+    private func tuneHandle(edge: BoundaryEdge, pointID: UUID, time: TimeInterval, width: CGFloat, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 3)
+            .fill(Color.orange)
+            .frame(width: 10, height: height)
+            .overlay(
+                Image(systemName: edge == .start ? "chevron.compact.left" : "chevron.compact.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.black.opacity(0.6))
+            )
+            .offset(x: timeToX(time, width: width) - 5)
+            .cursor(.resizeLeftRight)
+            .gesture(
+                DragGesture(coordinateSpace: .named("trimTimeline"))
+                    .onChanged { value in
+                        let raw = xToTime(value.location.x, width: width)
+                        let limits = appState.boundaryLimits(for: pointID)
+                        guard let current = appState.point(withID: pointID) else { return }
+                        if tuneDragOrigin == nil {
+                            tuneDragOrigin = edge == .start ? current.start : current.end
+                        }
+                        switch edge {
+                        case .start:
+                            let clamped = min(max(raw, limits.minStart + 0.05), current.end - 0.5)
+                            appState.updatePointBoundary(pointID: pointID, newStart: clamped)
+                        case .end:
+                            let clamped = max(min(raw, limits.maxEnd - 0.05), current.start + 0.5)
+                            appState.updatePointBoundary(pointID: pointID, newEnd: clamped)
+                        }
+                    }
+                    .onEnded { _ in
+                        if let from = tuneDragOrigin, let current = appState.point(withID: pointID) {
+                            appState.commitPointBoundary(
+                                pointID: pointID,
+                                edge: edge,
+                                from: from,
+                                to: edge == .start ? current.start : current.end
+                            )
+                            appState.refreshDerivedAfterBoundaryChange()
+                        }
+                        tuneDragOrigin = nil
+                    }
+            )
     }
 
     private func timeToX(_ time: TimeInterval, width: CGFloat) -> CGFloat {
@@ -633,6 +706,13 @@ struct TrimOverlayTimelineView: View {
         let cmTime = CMTime(seconds: time, preferredTimescale: 600)
         appState.player?.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero)
         playheadTime = time
+    }
+
+    /// Fast keyframe-tolerant seek for continuous scrubbing.
+    private func scrubTo(_ time: TimeInterval) {
+        let clamped = max(viewport.visibleStart, min(viewport.visibleEnd, time))
+        appState.player?.seek(to: CMTime(seconds: clamped, preferredTimescale: 600))
+        playheadTime = clamped
     }
 
     private func trimColor(for trim: TrimSegment) -> Color {

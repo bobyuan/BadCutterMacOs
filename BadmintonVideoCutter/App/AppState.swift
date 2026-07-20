@@ -851,10 +851,35 @@ final class AppState: ObservableObject {
             return FeedbackOutcome(focusPointID: nil, ghostStart: nil, ghostEnd: nil, autoAdjusted: true)
         }
 
-        guard let proposal = PointAdjuster.propose(reason: reason, context: adjusterContext(for: point)) else {
-            statusMessage = "No confident automatic fix — adjust with the tune bar below the player."
+        // Flush against a neighbor, "cut off" complaint → the neighbor IS the
+        // continuation of this rally: absorb it (delete neighbor, take its span).
+        if reason == .endsTooEarly,
+           let next = activePoints.first(where: { $0.start >= point.end - 0.01 && $0.id != pointID }),
+           next.start - point.end < 0.35 {
+            return mergeAbsorbing(neighbor: next, into: point, edge: .end)
+        }
+        if reason == .startsTooLate,
+           let previous = activePoints.last(where: { $0.end <= point.start + 0.01 && $0.id != pointID }),
+           point.start - previous.end < 0.35 {
+            return mergeAbsorbing(neighbor: previous, into: point, edge: .start)
+        }
+
+        // Signal-based fix first; when the evidence is inconclusive (or the
+        // reason is repeated after the signal is exhausted), honor the user's
+        // explicit judgment with a fixed nudge they can refine by dragging.
+        var usedFallback = false
+        var resolved = PointAdjuster.propose(reason: reason, context: adjusterContext(for: point))
+        if resolved == nil {
+            resolved = fallbackProposal(reason: reason, point: point)
+            usedFallback = resolved != nil
+        }
+        guard let proposal = resolved else {
+            statusMessage = "Nothing left to adjust automatically — drag the orange handles to fine-tune."
             return FeedbackOutcome(focusPointID: pointID, ghostStart: nil, ghostEnd: nil, autoAdjusted: false)
         }
+        let suffix = usedFallback
+            ? " (no clear signal — fixed nudge; drag the orange handle to refine)"
+            : ""
 
         switch proposal {
         case .adjustStart(let to):
@@ -863,7 +888,7 @@ final class AppState: ObservableObject {
             commitPointBoundary(pointID: pointID, edge: .start, from: from, to: to)
             deriveTrimSegments()
             computeAllScores()
-            statusMessage = String(format: "Start moved %+.1fs (%@). Fine-tune below or ⌘Z to undo.", to - from, reason.label)
+            statusMessage = String(format: "Start moved %+.1fs (%@).%@ ⌘Z to undo.", to - from, reason.label, suffix)
             return FeedbackOutcome(focusPointID: pointID, ghostStart: from, ghostEnd: nil, autoAdjusted: true)
 
         case .adjustEnd(let to):
@@ -872,7 +897,7 @@ final class AppState: ObservableObject {
             commitPointBoundary(pointID: pointID, edge: .end, from: from, to: to)
             deriveTrimSegments()
             computeAllScores()
-            statusMessage = String(format: "End moved %+.1fs (%@). Fine-tune below or ⌘Z to undo.", to - from, reason.label)
+            statusMessage = String(format: "End moved %+.1fs (%@).%@ ⌘Z to undo.", to - from, reason.label, suffix)
             return FeedbackOutcome(focusPointID: pointID, ghostStart: nil, ghostEnd: from, autoAdjusted: true)
 
         case .split(let firstEnd, let secondStart):
@@ -892,6 +917,72 @@ final class AppState: ObservableObject {
             statusMessage = String(format: "Added missed point %@ – %@ — drag or tune to adjust.",
                                    Self.formatTimestamp(start), Self.formatTimestamp(end))
             return FeedbackOutcome(focusPointID: newID, ghostStart: nil, ghostEnd: nil, autoAdjusted: true)
+        }
+    }
+
+    /// Absorb a flush neighbor into the complained-about point: delete the
+    /// neighbor and take over its span (two ledger events; ⌘Z twice undoes).
+    private func mergeAbsorbing(neighbor: GamePoint, into target: GamePoint, edge: BoundaryEdge) -> FeedbackOutcome {
+        setPointReviewStatus(pointID: neighbor.id, status: .deleted)
+        switch edge {
+        case .end:
+            updatePointBoundary(pointID: target.id, newEnd: neighbor.end)
+            commitPointBoundary(pointID: target.id, edge: .end, from: target.end, to: neighbor.end)
+        case .start:
+            updatePointBoundary(pointID: target.id, newStart: neighbor.start)
+            commitPointBoundary(pointID: target.id, edge: .start, from: target.start, to: neighbor.start)
+        }
+        deriveTrimSegments()
+        computeAllScores()
+        statusMessage = edge == .end
+            ? "Merged with the next point — the rally continues through it. ⌘Z twice to undo."
+            : "Merged with the previous point — the rally started there. ⌘Z twice to undo."
+        return FeedbackOutcome(
+            focusPointID: target.id,
+            ghostStart: edge == .start ? target.start : nil,
+            ghostEnd: edge == .end ? target.end : nil,
+            autoAdjusted: true
+        )
+    }
+
+    /// Hard limits for dragging/extending a point's boundaries: the previous
+    /// active point's end and the next active point's start.
+    func boundaryLimits(for pointID: UUID) -> (minStart: TimeInterval, maxEnd: TimeInterval) {
+        guard let target = point(withID: pointID) else { return (0, .greatestFiniteMagnitude) }
+        let active = activePoints
+        let prevEnd = active.last(where: { $0.end <= target.start + 0.01 && $0.id != pointID })?.end ?? 0
+        let duration = videoMetadata?.duration
+            ?? sessionBaseline?.videoDuration
+            ?? (featureFrames.last?.timestamp ?? target.end + 60)
+        let nextStart = active.first(where: { $0.start >= target.end - 0.01 && $0.id != pointID })?.start ?? duration
+        return (prevEnd, nextStart)
+    }
+
+    /// Public wrapper so drag handles can refresh trims + scores on release.
+    func refreshDerivedAfterBoundaryChange() {
+        deriveTrimSegments()
+        computeAllScores()
+    }
+
+    /// Fixed nudge used when the signal-based adjuster declines: extend 1s
+    /// for "cut off" reasons, trim 0.5s for "dead time" reasons, clamped.
+    private func fallbackProposal(reason: PointFeedbackReason, point: GamePoint) -> PointAdjuster.Proposal? {
+        let limits = boundaryLimits(for: point.id)
+        switch reason {
+        case .endsTooEarly:
+            let to = min(limits.maxEnd - 0.05, point.end + 1.0)
+            return to - point.end >= 0.2 ? .adjustEnd(to: to) : nil
+        case .startsTooLate:
+            let to = max(limits.minStart + 0.05, point.start - 1.0)
+            return point.start - to >= 0.2 ? .adjustStart(to: to) : nil
+        case .startsTooEarly:
+            let to = min(point.end - 1.0, point.start + 0.5)
+            return to - point.start >= 0.2 ? .adjustStart(to: to) : nil
+        case .endsTooLate:
+            let to = max(point.start + 1.0, point.end - 0.5)
+            return point.end - to >= 0.2 ? .adjustEnd(to: to) : nil
+        default:
+            return nil
         }
     }
 
