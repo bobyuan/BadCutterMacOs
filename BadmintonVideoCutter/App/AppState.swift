@@ -1067,7 +1067,7 @@ final class AppState: ObservableObject {
         }
         computeAllScores()
         scheduleServeRedetection()
-        statusMessage = "Re-detecting serves for \(affected.count) plays from #\(target.pointNumber) — scores refresh in a moment."
+        statusMessage = "Re-detecting serve parties for \(affected.count) plays from #\(target.pointNumber) (vision model) — scores refresh in a moment."
     }
 
     /// After a MANUAL extension, don't auto-split — surface the finding.
@@ -1396,18 +1396,32 @@ final class AppState: ObservableObject {
         serveRedetectTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard let self, !Task.isCancelled, self.currentAssetURL == url else { return }
-            let dirty = self.activePoints.filter {
+            let active = self.activePoints
+            let dirty = active.filter {
                 self.serveOverrides[$0.id] == nil
                     && (self.serveSides[$0.id] == nil || self.serveDirtyIDs.contains($0.id))
             }
             guard !dirty.isEmpty else { return }
-            let sides = await ServeDetector.detectServes(videoURL: url, points: dirty)
+            self.statusMessage = "Re-detecting serve parties for \(dirty.count) play\(dirty.count == 1 ? "" : "s") with the vision model…"
+
+            // Detect over ALL active plays: the classifier splits sides
+            // around the centroid distribution's median, so a small or
+            // one-sided subset would mis-split. Fresh results are applied
+            // only to the dirty plays; manual pins stay untouched.
+            let detection = await ServeDetector.detectServesWithAxis(videoURL: url, points: active)
             guard !Task.isCancelled, self.currentAssetURL == url else { return }
-            for (id, side) in sides { self.serveSides[id] = side }
+            self.serveAxis = detection.axis
+            for point in dirty {
+                if let side = detection.sides[point.id] {
+                    self.serveSides[point.id] = side
+                }
+            }
             self.serveDirtyIDs.subtract(dirty.map(\.id))
             self.computeAllScores()
+            self.statusMessage = "Serve parties re-detected (\(dirty.count) play\(dirty.count == 1 ? "" : "s")) — scores recalculated."
             if var baseline = self.sessionBaseline {
                 baseline.serveSides = self.serveSides
+                baseline.serveAxis = detection.axis
                 self.sessionBaseline = baseline
                 self.sessionStore.rewriteBaseline(baseline, for: url)
             }
