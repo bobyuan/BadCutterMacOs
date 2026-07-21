@@ -42,7 +42,7 @@ final class ServeDetector {
     /// Full detection incl. per-point confidence: the centroid's distance from
     /// the split median (0 = coin flip, larger = more certain).
     static func detectServesWithConfidence(videoURL: URL, points: [GamePoint]) async -> (sides: [UUID: ServeSide], axis: Axis, margins: [UUID: Double]) {
-        let pointData = points.map { (id: $0.id, start: $0.start) }
+        let pointData = points.map { (id: $0.id, start: $0.start, number: $0.pointNumber) }
         guard !pointData.isEmpty else { return ([:], .horizontal, [:]) }
 
         return await Task.detached {
@@ -55,6 +55,11 @@ final class ServeDetector {
 
             // Step 1: Compute motion centroid for each rally start
             var centroids: [(id: UUID, cx: Double, cy: Double)] = []
+            var log: [String] = []
+            log.append("SERVE DETECTION LOG — \(Date())")
+            log.append("video: \(videoURL.lastPathComponent)  plays: \(pointData.count)")
+            log.append("window: start+0.1 / +0.5 / +0.9 (motion centroid of frame pairs)")
+            var grabFailures = 0
 
             for point in pointData {
                 let t0 = CMTime(seconds: point.start + 0.1, preferredTimescale: 600)
@@ -64,6 +69,8 @@ final class ServeDetector {
                 guard let img0 = try? generator.copyCGImage(at: t0, actualTime: nil),
                       let img1 = try? generator.copyCGImage(at: t1, actualTime: nil) else {
                     centroids.append((id: point.id, cx: 0.5, cy: 0.5))
+                    grabFailures += 1
+                    log.append(String(format: "play #%d t=%.1fs  FRAME GRAB FAILED → placeholder centroid (0.5,0.5) [known gap G3]", point.number, point.start))
                     continue
                 }
 
@@ -101,6 +108,10 @@ final class ServeDetector {
             var results: [UUID: ServeSide] = [:]
             var margins: [UUID: Double] = [:]
 
+            log.append(String(format: "axis: %@ (xVar=%.5f yVar=%.5f)", axis == .horizontal ? "horizontal (left|right)" : "vertical (far|near)", xVariance, yVariance))
+            log.append(String(format: "split: MEDIAN=%.4f deadZone=%.2f  [known gap G1: median forces ~50/50 side balance]", median, deadZone))
+            log.append(String(format: "sorted axis values: %@", sortedValues.map { String(format: "%.3f", $0) }.joined(separator: " ")))
+
             for (i, entry) in centroids.enumerated() {
                 let val = values[i]
                 margins[entry.id] = abs(val - median)
@@ -111,7 +122,16 @@ final class ServeDetector {
                 } else {
                     results[entry.id] = .unknown
                 }
+                let number = pointData.first(where: { $0.id == entry.id })?.number ?? 0
+                let start = pointData.first(where: { $0.id == entry.id })?.start ?? 0
+                log.append(String(format: "play #%d t=%.1fs  centroid=(%.3f,%.3f)  axisVal=%.4f  margin=%.4f  → %@",
+                                  number, start, entry.cx, entry.cy, val, abs(val - median),
+                                  results[entry.id]!.rawValue.uppercased()))
             }
+            if grabFailures > 0 {
+                log.append("grab failures: \(grabFailures) (placeholder centroids pollute the split — G3)")
+            }
+            try? log.joined(separator: "\n").write(toFile: "/tmp/serve_detection_log.txt", atomically: true, encoding: .utf8)
 
             return (results, axis, margins)
         }.value
@@ -193,8 +213,23 @@ final class ServeDetector {
         firstServe explicitFirstServe: ServeSide? = nil,
         lastPointWinner: ServeSide? = nil
     ) -> [UUID: PointScore] {
+        computeScoresWithTrace(points: points, serveSides: serveSides,
+                               nextGameFirstServe: nextGameFirstServe,
+                               firstServe: explicitFirstServe,
+                               lastPointWinner: lastPointWinner).scores
+    }
+
+    /// Same computation, plus a per-play natural-language derivation trace
+    /// ("how did this play get its winner") for the diagnostics log.
+    static func computeScoresWithTrace(
+        points: [GamePoint],
+        serveSides: [UUID: ServeSide],
+        nextGameFirstServe: ServeSide? = nil,
+        firstServe explicitFirstServe: ServeSide? = nil,
+        lastPointWinner: ServeSide? = nil
+    ) -> (scores: [UUID: PointScore], trace: [UUID: String]) {
         let activePoints = points.filter { $0.reviewStatus != .deleted }
-        guard !activePoints.isEmpty else { return [:] }
+        guard !activePoints.isEmpty else { return ([:], [:]) }
 
         // Player A = the side that serves the game's FIRST point. Callers
         // should pass it explicitly so score columns and UI labels share one
@@ -205,12 +240,14 @@ final class ServeDetector {
         } else if let known = activePoints.first(where: { serveSides[$0.id] != nil && serveSides[$0.id] != .unknown }) {
             firstServe = serveSides[known.id]!
         } else {
-            return [:]
+            return ([:], [:])
         }
 
         var scoreA = 0
         var scoreB = 0
         var results: [UUID: PointScore] = [:]
+        var trace: [UUID: String] = [:]
+        func letter(_ side: ServeSide) -> String { side == firstServe ? "A" : "B" }
 
         for i in 0..<activePoints.count {
             // Rally scoring: the winner of point N is exactly the side that
@@ -218,39 +255,54 @@ final class ServeDetector {
             // means one misdetected side corrupts one point, not two, and a
             // point whose own serve is unknown still scores correctly.
             let winnerSide: ServeSide
+            var how = ""
             if i == activePoints.count - 1, let lastPointWinner, lastPointWinner != .unknown {
                 // An explicit winner override on the game's final play beats
                 // the next game's first serve — that serve may be a pin
                 // anchoring the NEXT game, not evidence about this play.
                 winnerSide = lastPointWinner
+                how = "explicit final-play winner override (\(lastPointWinner.rawValue))"
             } else if i < activePoints.count - 1 {
                 winnerSide = serveSides[activePoints[i + 1].id] ?? .unknown
+                how = winnerSide == .unknown
+                    ? "next play's serve UNKNOWN"
+                    : "next play (#\(activePoints[i + 1].pointNumber)) served by \(winnerSide.rawValue)"
             } else {
                 winnerSide = nextGameFirstServe ?? .unknown
+                how = winnerSide == .unknown
+                    ? "final play, no next-game serve"
+                    : "next GAME's first serve by \(winnerSide.rawValue)"
             }
 
             if winnerSide != .unknown {
                 if winnerSide == firstServe { scoreA += 1 } else { scoreB += 1 }
+                trace[activePoints[i].id] = "winner=\(letter(winnerSide)) — \(how)"
             } else if i == activePoints.count - 1 {
                 // Last point with no following game: an explicit winner
                 // override decides; else leader likely won; tie → server.
                 let currentServe = serveSides[activePoints[i].id] ?? .unknown
                 if scoreA != scoreB {
+                    let leader = scoreA > scoreB ? "A" : "B"
                     if scoreA > scoreB { scoreA += 1 } else { scoreB += 1 }
+                    trace[activePoints[i].id] = "winner=\(leader) — GUESS (\(how); assumed leader won)"
                 } else if currentServe != .unknown, currentServe != firstServe {
                     scoreB += 1
+                    trace[activePoints[i].id] = "winner=B — GUESS (\(how); tie, assumed server B won)"
                 } else {
                     scoreA += 1
+                    trace[activePoints[i].id] = "winner=A — GUESS (\(how); tie, assumed server/A won)"
                 }
             } else {
                 // Next serve unknown mid-game — best guess: leader won.
+                let guessed = scoreA >= scoreB ? "A" : "B"
                 if scoreA >= scoreB { scoreA += 1 } else { scoreB += 1 }
+                trace[activePoints[i].id] = "winner=\(guessed) — GUESS (\(how); assumed leader won)"
             }
 
             results[activePoints[i].id] = PointScore(scoreA: scoreA, scoreB: scoreB)
         }
 
-        return results
+        return (results, trace)
     }
 }
 

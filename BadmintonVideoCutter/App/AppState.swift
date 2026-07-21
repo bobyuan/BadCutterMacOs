@@ -1682,18 +1682,65 @@ final class AppState: ObservableObject {
 
             let lastActive = game.points.filter { $0.reviewStatus != .deleted }
                 .max(by: { $0.start < $1.start })
-            let scores = ServeDetector.computeScores(
+            let result = ServeDetector.computeScoresWithTrace(
                 points: game.points,
                 serveSides: serveSides.merging(serveOverrides) { _, manual in manual },
                 nextGameFirstServe: nextGameFirstServe,
                 firstServe: anchorSide(for: game),
                 lastPointWinner: lastActive.flatMap { winnerOverrides[$0.id] }
             )
-            allScores.merge(scores) { _, new in new }
+            allScores.merge(result.scores) { _, new in new }
+            scoreTraces.merge(result.trace) { _, new in new }
         }
 
         pointScores = allScores
         refreshHighlightScores()
+        writeScoreDiagnosticsLog()
+    }
+
+    /// Per-play winner-derivation traces from the last score computation.
+    private var scoreTraces: [UUID: String] = [:]
+
+    /// Human-readable dump of the whole winner-detection chain, rewritten on
+    /// every score computation: per game the anchor and its source, per play
+    /// the serve side + provenance (pinned/detected/missing) and the exact
+    /// evidence that decided its winner. The raw classifier internals
+    /// (centroids, split, margins) land in /tmp/serve_detection_log.txt.
+    private func writeScoreDiagnosticsLog() {
+        var lines: [String] = []
+        lines.append("SCORE DERIVATION LOG — \(Date())")
+        lines.append("video: \(currentAssetURL?.lastPathComponent ?? "?")  axis: \(serveAxis == .vertical ? "vertical (far|near)" : "horizontal (left|right)")")
+        lines.append("rule: winner(N) = server(N+1); A = side serving each game's first play; display A:B")
+
+        func provenance(_ id: UUID) -> String {
+            if let o = serveOverrides[id] { return "\(o.rawValue)[PINNED]" }
+            if let d = serveSides[id] { return "\(d.rawValue)[detected]" }
+            return "—[missing]"
+        }
+
+        for game in games {
+            let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+            guard !active.isEmpty else { continue }
+            let anchor = anchorSide(for: game)
+            let anchorSource: String
+            if let first = active.first {
+                if serveOverrides[first.id] != nil { anchorSource = "first play PINNED" }
+                else if serveSides[first.id] != nil, serveSides[first.id] != .unknown { anchorSource = "first play detected" }
+                else { anchorSource = "FALLBACK: earliest known side (first play unknown)" }
+            } else { anchorSource = "?" }
+            lines.append("")
+            lines.append("GAME \(game.gameNumber): A = \(anchor.map { serveSideLabel($0).lowercased() } ?? "?") side (\(anchorSource))")
+            if let v = scoreViolation(for: game) { lines.append("  ⚠️ RULES VIOLATION: \(v)") }
+
+            for point in active {
+                let score = pointScores[point.id].map { "\($0.scoreA):\($0.scoreB)" } ?? "—"
+                let trace = scoreTraces[point.id] ?? "no trace"
+                lines.append(String(format: "#%-3d %6.1fs–%6.1fs  serve=%@  %@  → %@",
+                                    point.pointNumber, point.start, point.end,
+                                    provenance(point.id), trace, score))
+            }
+        }
+        try? lines.joined(separator: "\n").write(toFile: "/tmp/score_detection_log.txt", atomically: true, encoding: .utf8)
     }
 
     /// Recompute highlight scores for the active points: the promoted personal

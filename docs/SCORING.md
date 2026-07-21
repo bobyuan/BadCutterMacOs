@@ -183,7 +183,27 @@ constraints in L2, and never touches rows above a recalculation point.
   add noise, run L1+L2 → recovered chain must satisfy terminal rules and
   match the clean chain except at noise sites with adjacent noise.
 
-## 10. Known Gaps (as of 2026-07-21)
+## 10. Diagnostics
+
+Two log files, overwritten on every run, for troubleshooting winner
+detection (paste them into a session for analysis):
+
+- **`/tmp/serve_detection_log.txt`** — classifier internals, written on every
+  serve-detection pass: per play the motion centroid, chosen axis (with
+  variances), the split value and dead zone, the play's axis value and
+  margin, the resulting side, and any frame-grab failures.
+- **`/tmp/score_detection_log.txt`** — winner-chain derivation, written on
+  every score computation: per game the anchor (which physical side is A and
+  why — pinned / detected / fallback) and any rules violation; per play the
+  serve side with provenance (`PINNED` / `detected` / `missing`), the exact
+  evidence that decided its winner ("next play (#7) served by left",
+  "GUESS (…; assumed leader won)", "explicit final-play winner override"),
+  and the running score.
+
+Every guessed winner is marked `GUESS` — the first thing to look for when a
+chain went wrong (G7: today these are invisible in the UI).
+
+## 11. Known Gaps (as of 2026-07-21)
 
 | # | Gap | Layer | Severity |
 |---|-----|-------|----------|
