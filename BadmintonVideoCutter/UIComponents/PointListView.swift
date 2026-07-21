@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct PointListView: View {
     @ObservedObject var appState: AppState
@@ -17,6 +18,9 @@ struct PointListView: View {
     @State private var fixScoreB = ""
     /// Game-separator confirmation.
     @State private var gameSplitCandidate: GamePoint?
+    /// Legend popover: game whose A/B court frame is being shown.
+    @State private var legendGameID: UUID?
+    @State private var legendFrame: CGImage?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -252,6 +256,29 @@ struct PointListView: View {
                         } header: {
                             VStack(alignment: .leading, spacing: 2) {
                                 GameSectionHeader(game: game, pointScores: appState.pointScores)
+                                if let legend = appState.sideLegend(for: game) {
+                                    HStack(spacing: 4) {
+                                        Text(legend)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                        Button {
+                                            legendGameID = game.id
+                                            legendFrame = nil
+                                            loadLegendFrame(for: game)
+                                        } label: {
+                                            Image(systemName: "photo.circle")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .help("Show the court with A/B labeled")
+                                        .popover(isPresented: Binding(
+                                            get: { legendGameID == game.id },
+                                            set: { if !$0 { legendGameID = nil } }
+                                        )) {
+                                            legendPopover(for: game)
+                                        }
+                                    }
+                                }
                                 if let violation = appState.scoreViolation(for: game) {
                                     HStack(spacing: 6) {
                                         Image(systemName: "exclamationmark.triangle.fill")
@@ -333,6 +360,70 @@ struct PointListView: View {
                     }
                 )
             }
+        }
+    }
+
+    // MARK: - Side Legend (A/B on the real court)
+
+    @ViewBuilder
+    private func legendPopover(for game: Game) -> some View {
+        let aFirst = appState.sideAIsFirstHalf(for: game)
+        let vertical = appState.serveAxis == .vertical
+        VStack(spacing: 8) {
+            if let frame = legendFrame {
+                ZStack {
+                    Image(decorative: frame, scale: 1)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                    if vertical {
+                        VStack {
+                            legendBadge(aFirst ? "A" : "B", isA: aFirst)
+                            Spacer()
+                            legendBadge(aFirst ? "B" : "A", isA: !aFirst)
+                        }
+                        .padding(14)
+                    } else {
+                        HStack {
+                            legendBadge(aFirst ? "A" : "B", isA: aFirst)
+                            Spacer()
+                            legendBadge(aFirst ? "B" : "A", isA: !aFirst)
+                        }
+                        .padding(14)
+                    }
+                }
+                .frame(width: 420, height: 240)
+            } else {
+                ProgressView()
+                    .frame(width: 420, height: 240)
+            }
+            Text("Side A served this game's first play. Scores read A:B.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+    }
+
+    private func legendBadge(_ letter: String, isA: Bool) -> some View {
+        Text(letter)
+            .font(.system(size: 24, weight: .heavy))
+            .foregroundStyle(.white)
+            .frame(width: 40, height: 40)
+            .background(Circle().fill(isA ? Color.blue : Color.orange))
+            .shadow(radius: 3)
+    }
+
+    private func loadLegendFrame(for game: Game) {
+        guard let url = appState.currentAssetURL,
+              let first = game.points.first(where: { $0.reviewStatus != .deleted }) else { return }
+        let time = first.start + 0.5
+        Task.detached {
+            let asset = AVURLAsset(url: url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 840, height: 480)
+            let cm = CMTime(seconds: time, preferredTimescale: 600)
+            let image = try? generator.copyCGImage(at: cm, actualTime: nil)
+            await MainActor.run { legendFrame = image }
         }
     }
 

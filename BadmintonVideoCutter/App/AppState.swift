@@ -1068,7 +1068,9 @@ final class AppState: ObservableObject {
     /// re-detects them (a few frame reads), and recomputes the score chain.
     func recalculateScores(fromPointID pointID: UUID) {
         guard let target = point(withID: pointID) else { return }
-        let affected = activePoints.filter { $0.start >= target.start - 0.01 }
+        // Strictly AFTER the selected play: its own serve encodes the FORMER
+        // play's winner and must not be disturbed by a forward recalculation.
+        let affected = activePoints.filter { $0.start > target.start + 0.01 }
         for p in affected where serveOverrides[p.id] == nil {
             serveSides.removeValue(forKey: p.id)
             serveDirtyIDs.insert(p.id)
@@ -1380,11 +1382,38 @@ final class AppState: ObservableObject {
         return nil
     }
 
+    /// Freeze the A/B anchor before any manual score correction: if the
+    /// game's first play has no known side, pin it to the current anchor so a
+    /// later correction can never re-anchor A/B and flip earlier plays.
+    private func freezeAnchorIfNeeded(for game: Game) {
+        let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+        guard let first = active.first else { return }
+        let firstSide = effectiveServeSide(for: first.id)
+        guard firstSide == nil || firstSide == .unknown else { return }
+        let anchor = anchorSide(for: game) ?? .left
+        recordEvent(.serveSideOverridden(pointID: first.id, side: anchor.rawValue))
+    }
+
+    /// Legend for a game: which physical side is A and which is B.
+    func sideLegend(for game: Game) -> String? {
+        guard let anchor = anchorSide(for: game), anchor != .unknown else { return nil }
+        let aPhysical = serveSideLabel(anchor).lowercased()
+        let bPhysical = serveSideLabel(anchor == .left ? .right : .left).lowercased()
+        return "A = \(aPhysical) side · B = \(bPhysical) side"
+    }
+
+    /// Whether Side A is the top/left half of the frame (for the legend
+    /// overlay on a real video frame).
+    func sideAIsFirstHalf(for game: Game) -> Bool {
+        (anchorSide(for: game) ?? .left) == .left
+    }
+
     /// Manual winner correction, in the user's A/B vocabulary. Winner of play
     /// N = server of play N+1, so mid-game this pins the NEXT play's serve;
     /// only the match's final play needs its own winner event.
     func overrideWinner(pointID: UUID, winnerIsA: Bool) {
         guard let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }) else { return }
+        freezeAnchorIfNeeded(for: game)
         let anchor = anchorSide(for: game) ?? .left
         let winnerSide: ServeDetector.ServeSide = winnerIsA ? anchor : (anchor == .left ? .right : .left)
 
@@ -1429,6 +1458,7 @@ final class AppState: ObservableObject {
             statusMessage = "\(targetA):\(targetB) totals \(targetA + targetB) plays but this game has \(active.count) — fix plays first (delete/add), then correct the score."
             return
         }
+        freezeAnchorIfNeeded(for: game)
         statusMessage = "Analyzing serve confidence to reconcile the score…"
         let allActive = activePoints
         Task {
