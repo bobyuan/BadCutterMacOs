@@ -292,6 +292,9 @@ struct PointListView: View {
                                         setScoreA = ""
                                         setScoreB = ""
                                     },
+                                    onReleaseScoreEdits: {
+                                        appState.releaseScoreEdits(pointID: point.id)
+                                    },
                                     onTap: {
                                         handleTap(on: point)
                                     }
@@ -423,6 +426,9 @@ struct PointListView: View {
                         setScoreIsBefore = true
                         setScoreA = ""
                         setScoreB = ""
+                    },
+                    onReleaseScoreEdits: {
+                        appState.releaseScoreEdits(pointID: entry.point.id)
                     },
                     onTap: {
                         handleTap(on: entry.point)
@@ -676,6 +682,7 @@ struct PointRow: View {
     var onRecalculateScore: (() -> Void)?
     var onSetScore: (() -> Void)?
     var onSetScoreBefore: (() -> Void)?
+    var onReleaseScoreEdits: (() -> Void)?
     let onTap: () -> Void
 
     /// After-score with the component that just incremented rendered bold in
@@ -883,6 +890,7 @@ struct PointRow: View {
                 Button("Recalculate score from here") { onRecalculateScore?() }
                 Button("Set score before this play…") { onSetScoreBefore?() }
                 Button("Set score after this play…") { onSetScore?() }
+                Button("Release manual score edits") { onReleaseScoreEdits?() }
                 Button("Start new game from this play…") { onStartNewGame?() }
             }
             Divider()

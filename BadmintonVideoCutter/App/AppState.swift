@@ -810,19 +810,25 @@ final class AppState: ObservableObject {
                     ratings.removeValue(forKey: pointID)
                 }
             }
+            // "unknown" / negative values are release sentinels (G9): the
+            // last event wins, so a release returns the play to automation.
             if case .serveSideOverridden(let pointID, let raw) = event,
                let side = ServeDetector.ServeSide(rawValue: raw) {
-                overrides[pointID] = side
+                if side == .unknown { overrides.removeValue(forKey: pointID) }
+                else { overrides[pointID] = side }
             }
             if case .pointWinnerOverridden(let pointID, let raw) = event,
                let side = ServeDetector.ServeSide(rawValue: raw) {
-                winners[pointID] = side
+                if side == .unknown { winners.removeValue(forKey: pointID) }
+                else { winners[pointID] = side }
             }
             if case .scoreAdjusted(let pointID, let a, let b) = event {
-                adjustments[pointID] = ServeDetector.PointScore(scoreA: a, scoreB: b)
+                if a < 0 || b < 0 { adjustments.removeValue(forKey: pointID) }
+                else { adjustments[pointID] = ServeDetector.PointScore(scoreA: a, scoreB: b) }
             }
             if case .scoreAdjustedBefore(let pointID, let a, let b) = event {
-                adjustmentsBefore[pointID] = ServeDetector.PointScore(scoreA: a, scoreB: b)
+                if a < 0 || b < 0 { adjustmentsBefore.removeValue(forKey: pointID) }
+                else { adjustmentsBefore[pointID] = ServeDetector.PointScore(scoreA: a, scoreB: b) }
             }
         }
         pointRatings = ratings
@@ -1574,6 +1580,46 @@ final class AppState: ObservableObject {
         recordEvent(.scoreAdjustedBefore(pointID: pointID, scoreA: scoreA, scoreB: scoreB))
         computeAllScores()
         statusMessage = "Score before play #\(target.pointNumber) set to \(scoreA):\(scoreB) — this play and later continue from it."
+    }
+
+    /// Release every manual score edit touching a play (G9): its winner pin
+    /// (= next play's serve pin), a final-play winner, and any manual score
+    /// sets. The play returns to automatic detection + inference.
+    func releaseScoreEdits(pointID: UUID) {
+        guard let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }),
+              let target = point(withID: pointID) else { return }
+        let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+        guard let idx = active.firstIndex(where: { $0.id == pointID }) else { return }
+        var released: [String] = []
+        if idx < active.count - 1 {
+            let next = active[idx + 1]
+            if serveOverrides[next.id] != nil {
+                recordEvent(.serveSideOverridden(pointID: next.id, side: ServeDetector.ServeSide.unknown.rawValue))
+                serveDirtyIDs.insert(next.id)
+                released.append("winner pin")
+            }
+        }
+        if winnerOverrides[pointID] != nil {
+            recordEvent(.pointWinnerOverridden(pointID: pointID, side: ServeDetector.ServeSide.unknown.rawValue))
+            released.append("final-play winner")
+        }
+        if scoreAdjustments[pointID] != nil {
+            recordEvent(.scoreAdjusted(pointID: pointID, scoreA: -1, scoreB: -1))
+            released.append("score set (after)")
+        }
+        if scoreAdjustmentsBefore[pointID] != nil {
+            recordEvent(.scoreAdjustedBefore(pointID: pointID, scoreA: -1, scoreB: -1))
+            released.append("score set (before)")
+        }
+        guard !released.isEmpty else {
+            statusMessage = "Play #\(target.pointNumber) has no manual score edits."
+            return
+        }
+        appendCorrectionLog("RELEASE play #\(target.pointNumber): \(released.joined(separator: ", ")) — back to automatic")
+        applySequenceInference()
+        computeAllScores()
+        scheduleServeRedetection()
+        statusMessage = "Released \(released.joined(separator: ", ")) on play #\(target.pointNumber) — automatic detection applies again."
     }
 
     /// Rules violation for a game's score chain, if any (e.g. 23:9).

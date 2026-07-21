@@ -58,11 +58,17 @@ final class ServeDetector {
         let t0 = serveAnchorTime(start: start, onsets: onsets)
         var xs: [Double] = []
         var ys: [Double] = []
+        var lastHit: TimeInterval?
         for frame in frames where frame.timestamp >= t0 - 0.2 {
             if frame.timestamp > t0 + 1.2 { break }
             if let pos = frame.shuttlecockPosition {
+                // Only the first CONTINUOUS stretch of tracking — that's the
+                // serve leaving the server. A gap means a later shot, whose
+                // position belongs to the rally, not the serve.
+                if let last = lastHit, frame.timestamp - last > 0.35 { break }
                 xs.append(pos.x)
                 ys.append(pos.y)
+                lastHit = frame.timestamp
                 if xs.count >= 5 { break }
             }
         }
@@ -244,12 +250,18 @@ final class ServeDetector {
     /// instead of being force-assigned.
     static func classifySides(values: [Double]) -> (sides: [ServeSide], margins: [Double], point: Double, gap: Double) {
         let split = clusterSplit(values: values)
+        // G8: margins are distances normalized by the mean intra-cluster
+        // spread — comparable across runs and evidence sources, honest as
+        // confidence (raw distance from a shifted boundary was not).
+        let lows = values.filter { $0 < split.point }
+        let highs = values.filter { $0 >= split.point }
+        let spread = max(0.01, (sqrt(variance(lows)) + sqrt(variance(highs))) / 2)
         var sides: [ServeSide] = []
         var margins: [Double] = []
         for val in values {
-            let margin = abs(val - split.point)
-            margins.append(margin)
-            if margin <= clusterDeadZone {
+            let distance = abs(val - split.point)
+            margins.append(distance / spread)
+            if distance <= clusterDeadZone {
                 sides.append(.unknown)
             } else {
                 sides.append(val < split.point ? .left : .right)

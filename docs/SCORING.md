@@ -226,9 +226,9 @@ centroids/margins to diagnose *why* each wrong call happened.
 | G5 | ~~Shuttle positions unused~~ **FIXED 2026-07-21**: `shuttleCentroid` — first ≤5 tracked positions near the serve moment are the primary evidence; motion centroid only as fallback; per-source cluster splits | L1 | ~~high~~ |
 | G6 | ~~Axis re-chosen every run~~ **FIXED 2026-07-21**: incremental passes reuse the persisted baseline axis (`preferredAxis`); fresh analysis re-chooses (shuttle-group variance preferred) | L1 | ~~medium~~ |
 | G7 | ~~Guessed winners indistinguishable~~ **FIXED 2026-07-21**: per-row provenance badges — 📌 pinned, ✨ inferred, ❓ guessed (detected stays clean); `[inferred]` tier in logs | L5 | ~~medium~~ |
-| G8 | Margins measured from the median are not real confidence; reconciliation ranks flips by them | L1/L4 | medium |
-| G9 | No way to release a pin except undo | L4 | low |
-| G10 | Doubles: centroid mixes partner/receiver; shuttle-first + serve-moment anchoring mitigates | L1 | medium |
+| G8 | ~~Margins not real confidence~~ **FIXED 2026-07-21**: distance to the gap-split boundary normalized by mean intra-cluster spread — comparable across runs and evidence sources | L1/L4 | ~~medium~~ |
+| G9 | ~~No way to release a pin~~ **FIXED 2026-07-21**: "Release manual score edits" (right-click) — unknown/negative sentinel events return the play to automation; History shows releases | L4 | ~~low~~ |
+| G10 | Doubles: centroid mixes partner/receiver — **largely mitigated 2026-07-21** by shuttle-first evidence (G5) + serve-flight continuity (only the first continuous tracking stretch counts); remaining exposure is motion-fallback plays only | L1 | low (residual) |
 
 ## 12. Score ↔ Analysis History (verified 2026-07-21)
 

@@ -1019,16 +1019,24 @@ struct HistoryPanel: View {
             let label = PointFeedbackReason(rawValue: reason)?.label ?? reason
             return "Feedback on \(pointLabel(id, run: run)): \(label)"
         case .serveSideOverridden(let id, let side):
+            if side == ServeDetector.ServeSide.unknown.rawValue {
+                return "Released serve pin of \(pointLabel(id, run: run))"
+            }
             let label = ServeDetector.ServeSide(rawValue: side).map { appState.serveABLabel($0, forPointID: id) } ?? side
             return "Pinned serve of \(pointLabel(id, run: run)) to \(label)"
         case .gameSplitInserted(let id):
             return "Started a new game at \(pointLabel(id, run: run))"
         case .pointWinnerOverridden(let id, let side):
+            if side == ServeDetector.ServeSide.unknown.rawValue {
+                return "Released winner pin of \(pointLabel(id, run: run))"
+            }
             let label = ServeDetector.ServeSide(rawValue: side).map { appState.serveABLabel($0, forPointID: id) } ?? side
             return "Set winner of \(pointLabel(id, run: run)) to \(label)"
         case .scoreAdjusted(let id, let a, let b):
+            if a < 0 || b < 0 { return "Cleared manual score after \(pointLabel(id, run: run))" }
             return "Set score after \(pointLabel(id, run: run)) to \(a):\(b)"
         case .scoreAdjustedBefore(let id, let a, let b):
+            if a < 0 || b < 0 { return "Cleared manual score before \(pointLabel(id, run: run))" }
             return "Set score before \(pointLabel(id, run: run)) to \(a):\(b)"
         case .savedToPool(let rally, let background):
             return "Saved for training: \(rally) rally + \(background) background clips"
