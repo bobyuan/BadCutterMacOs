@@ -1424,9 +1424,13 @@ final class AppState: ObservableObject {
         // instead of silently recording pins. The wrong row is elsewhere.
         if let current = self.winnerIsA(of: pointID), current == winnerIsA {
             let number = point(withID: pointID)?.pointNumber ?? 0
+            appendCorrectionLog("play #\(number): user CONFIRMED winner=\(winnerIsA ? "A" : "B") (no-op)\nmodel: \(scoreTraces[pointID] ?? "no trace")")
             statusMessage = "Play #\(number) is already scored for Side \(winnerIsA ? "A" : "B") — nothing changed. If the score still looks wrong, correct the play whose winner is wrong, or use Swap A↔B in the game legend if the sides are reversed."
             return
         }
+        // Capture the model's belief BEFORE any pins rewrite provenance.
+        let modelBelief = scoreTraces[pointID] ?? "no trace"
+        let scoreBefore = pointScores[pointID].map { "\($0.scoreA):\($0.scoreB)" } ?? "—"
         // The user corrects THIS play against the chain they see above it —
         // make every earlier displayed winner durable first, so neither this
         // correction nor a later re-detection can ripple backward.
@@ -1437,11 +1441,26 @@ final class AppState: ObservableObject {
 
         let gameActive = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
         guard let idx = gameActive.firstIndex(where: { $0.id == pointID }) else { return }
+        let number0 = point(withID: pointID)?.pointNumber ?? 0
         if idx < gameActive.count - 1 {
-            recordEvent(.serveSideOverridden(pointID: gameActive[idx + 1].id, side: winnerSide.rawValue))
+            let next = gameActive[idx + 1]
+            appendCorrectionLog("""
+                CORRECTION play #\(number0) (\(String(format: "%.1f", gameActive[idx].start))s)
+                model said: \(modelBelief)  [displayed \(scoreBefore)]
+                user said:  winner=\(winnerIsA ? "A" : "B")
+                deciding serve (next play #\(next.pointNumber)) was: \(serveProvenance(next.id))
+                recorded: pin serve of #\(next.pointNumber) = \(winnerSide.rawValue)
+                """)
+            recordEvent(.serveSideOverridden(pointID: next.id, side: winnerSide.rawValue))
         } else {
             // Last play of ITS game gets an explicit winner event — pinning
             // the next game's first serve would re-anchor that game's A/B.
+            appendCorrectionLog("""
+                CORRECTION play #\(number0) (final play of its game)
+                model said: \(modelBelief)  [displayed \(scoreBefore)]
+                user said:  winner=\(winnerIsA ? "A" : "B")
+                recorded: explicit final-play winner = \(winnerSide.rawValue)
+                """)
             recordEvent(.pointWinnerOverridden(pointID: pointID, side: winnerSide.rawValue))
         }
         computeAllScores()
@@ -1491,6 +1510,7 @@ final class AppState: ObservableObject {
         guard let first = active.first else { return }
         let anchor = anchorSide(for: game) ?? .left
         let flipped: ServeDetector.ServeSide = anchor == .left ? .right : .left
+        appendCorrectionLog("SWAP A↔B game \(game.gameNumber): anchor \(anchor.rawValue) → \(flipped.rawValue) (user says labels were reversed)")
         recordEvent(.serveSideOverridden(pointID: first.id, side: flipped.rawValue))
         computeAllScores()
         statusMessage = "A and B swapped for game \(game.gameNumber) — Side A is now the \(serveSideLabel(flipped).lowercased()) side."
@@ -1573,6 +1593,10 @@ final class AppState: ObservableObject {
                     self.recordEvent(.pointWinnerOverridden(pointID: playPoint.id, side: winnerSide.rawValue))
                 }
             }
+            let flipLines = flips.map { idx in
+                "  flip play #\(active[idx].pointNumber): model winner=\(winners[idx] == true ? "A" : winners[idx] == false ? "B" : "?") margin=\(String(format: "%.4f", margins[idx])) → user chain needs \(flipToA ? "A" : "B")"
+            }.joined(separator: "\n")
+            self.appendCorrectionLog("RECONCILE game \(game.gameNumber) to true final score \(targetA):\(targetB) (delta \(delta))\n\(flipLines)")
             self.computeAllScores()
             let numbers = flips.map { "#\(active[$0].pointNumber)" }.sorted().joined(separator: ", ")
             self.statusMessage = "Flipped the least-confident winners (\(numbers)) → \(targetA):\(targetB). Review them — each is undoable via right-click or ⌘Z."
@@ -1626,9 +1650,10 @@ final class AppState: ObservableObject {
             // around the centroid distribution's median, so a small or
             // one-sided subset would mis-split. Fresh results are applied
             // only to the dirty plays; manual pins stay untouched.
-            let detection = await ServeDetector.detectServesWithAxis(videoURL: url, points: active)
+            let detection = await ServeDetector.detectServesWithConfidence(videoURL: url, points: active)
             guard !Task.isCancelled, self.currentAssetURL == url else { return }
             self.serveAxis = detection.axis
+            self.serveMargins.merge(detection.margins) { _, new in new }
             for point in dirty {
                 if let side = detection.sides[point.id] {
                     self.serveSides[point.id] = side
@@ -1651,9 +1676,10 @@ final class AppState: ObservableObject {
         let allPoints = games.flatMap(\.points)
 
         Task {
-            let detection = await ServeDetector.detectServesWithAxis(videoURL: url, points: allPoints)
+            let detection = await ServeDetector.detectServesWithConfidence(videoURL: url, points: allPoints)
             self.serveSides = detection.sides
             self.serveAxis = detection.axis
+            self.serveMargins = detection.margins
             computeAllScores()
 
             // Serve detection finishes after the baseline is saved — fold the
@@ -1700,6 +1726,25 @@ final class AppState: ObservableObject {
 
     /// Per-play winner-derivation traces from the last score computation.
     private var scoreTraces: [UUID: String] = [:]
+    /// Detection confidence margins from the last serve-detection pass.
+    private var serveMargins: [UUID: Double] = [:]
+
+    /// One play's serve side with provenance and confidence, for diagnostics.
+    private func serveProvenance(_ id: UUID) -> String {
+        if let o = serveOverrides[id] { return "\(o.rawValue)[PINNED]" }
+        if let d = serveSides[id] {
+            let m = serveMargins[id].map { String(format: " m=%.4f", $0) } ?? ""
+            return "\(d.rawValue)[detected\(m)]"
+        }
+        return "—[missing]"
+    }
+
+    /// Append-only correction audit: every manual score action captures the
+    /// model's belief (evidence + margin) vs the user's truth, so wrong
+    /// judgments can be analyzed later against /tmp/serve_detection_log.txt.
+    private func appendCorrectionLog(_ entry: String) {
+        appendToLog("=== \(Date())\n\(entry)\n", path: "/tmp/score_corrections_log.txt")
+    }
 
     /// Human-readable dump of the whole winner-detection chain, rewritten on
     /// every score computation: per game the anchor and its source, per play
@@ -1708,15 +1753,9 @@ final class AppState: ObservableObject {
     /// (centroids, split, margins) land in /tmp/serve_detection_log.txt.
     private func writeScoreDiagnosticsLog() {
         var lines: [String] = []
-        lines.append("SCORE DERIVATION LOG — \(Date())")
+        lines.append("════════ SCORE CALCULATION RUN — \(Date()) ════════")
         lines.append("video: \(currentAssetURL?.lastPathComponent ?? "?")  axis: \(serveAxis == .vertical ? "vertical (far|near)" : "horizontal (left|right)")")
         lines.append("rule: winner(N) = server(N+1); A = side serving each game's first play; display A:B")
-
-        func provenance(_ id: UUID) -> String {
-            if let o = serveOverrides[id] { return "\(o.rawValue)[PINNED]" }
-            if let d = serveSides[id] { return "\(d.rawValue)[detected]" }
-            return "—[missing]"
-        }
 
         for game in games {
             let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
@@ -1737,10 +1776,22 @@ final class AppState: ObservableObject {
                 let trace = scoreTraces[point.id] ?? "no trace"
                 lines.append(String(format: "#%-3d %6.1fs–%6.1fs  serve=%@  %@  → %@",
                                     point.pointNumber, point.start, point.end,
-                                    provenance(point.id), trace, score))
+                                    serveProvenance(point.id), trace, score))
             }
         }
-        try? lines.joined(separator: "\n").write(toFile: "/tmp/score_detection_log.txt", atomically: true, encoding: .utf8)
+        appendToLog(lines.joined(separator: "\n") + "\n", path: "/tmp/score_detection_log.txt")
+    }
+
+    /// Append-only log writer: every run is kept, nothing is overwritten.
+    private func appendToLog(_ text: String, path: String) {
+        let block = "\n" + text
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(block.data(using: .utf8)!)
+            try? handle.close()
+        } else {
+            try? block.write(toFile: path, atomically: true, encoding: .utf8)
+        }
     }
 
     /// Recompute highlight scores for the active points: the promoted personal

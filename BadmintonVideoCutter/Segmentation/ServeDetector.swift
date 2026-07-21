@@ -56,7 +56,7 @@ final class ServeDetector {
             // Step 1: Compute motion centroid for each rally start
             var centroids: [(id: UUID, cx: Double, cy: Double)] = []
             var log: [String] = []
-            log.append("SERVE DETECTION LOG — \(Date())")
+            log.append("════════ SERVE DETECTION RUN — \(Date()) ════════")
             log.append("video: \(videoURL.lastPathComponent)  plays: \(pointData.count)")
             log.append("window: start+0.1 / +0.5 / +0.9 (motion centroid of frame pairs)")
             var grabFailures = 0
@@ -131,7 +131,14 @@ final class ServeDetector {
             if grabFailures > 0 {
                 log.append("grab failures: \(grabFailures) (placeholder centroids pollute the split — G3)")
             }
-            try? log.joined(separator: "\n").write(toFile: "/tmp/serve_detection_log.txt", atomically: true, encoding: .utf8)
+            let block = "\n" + log.joined(separator: "\n") + "\n"
+            if let handle = FileHandle(forWritingAtPath: "/tmp/serve_detection_log.txt") {
+                handle.seekToEndOfFile()
+                handle.write(block.data(using: .utf8)!)
+                try? handle.close()
+            } else {
+                try? block.write(toFile: "/tmp/serve_detection_log.txt", atomically: true, encoding: .utf8)
+            }
 
             return (results, axis, margins)
         }.value

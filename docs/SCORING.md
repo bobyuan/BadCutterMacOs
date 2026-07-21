@@ -185,14 +185,15 @@ constraints in L2, and never touches rows above a recalculation point.
 
 ## 10. Diagnostics
 
-Two log files, overwritten on every run, for troubleshooting winner
-detection (paste them into a session for analysis):
+Three **append-only** log files (every run/correction adds a timestamped
+section; nothing is overwritten) for troubleshooting winner detection —
+paste them into a session for analysis:
 
-- **`/tmp/serve_detection_log.txt`** — classifier internals, written on every
+- **`/tmp/serve_detection_log.txt`** — classifier internals, appended on every
   serve-detection pass: per play the motion centroid, chosen axis (with
   variances), the split value and dead zone, the play's axis value and
   margin, the resulting side, and any frame-grab failures.
-- **`/tmp/score_detection_log.txt`** — winner-chain derivation, written on
+- **`/tmp/score_detection_log.txt`** — winner-chain derivation, appended on
   every score computation: per game the anchor (which physical side is A and
   why — pinned / detected / fallback) and any rules violation; per play the
   serve side with provenance (`PINNED` / `detected` / `missing`), the exact
@@ -200,8 +201,19 @@ detection (paste them into a session for analysis):
   "GUESS (…; assumed leader won)", "explicit final-play winner override"),
   and the running score.
 
+- **`/tmp/score_corrections_log.txt`** — the model-vs-user audit, appended on
+  every manual score action: the model's belief at correction time (evidence
+  + detection margin), what the user said, the deciding serve's provenance,
+  and what was recorded. User confirmations (clicking the already-believed
+  winner) are logged too — right calls matter for analysis as much as wrong
+  ones. Swap A↔B and "Fix score…" reconciliations (with per-flip margins)
+  also land here.
+
 Every guessed winner is marked `GUESS` — the first thing to look for when a
-chain went wrong (G7: today these are invisible in the UI).
+chain went wrong (G7: today these are invisible in the UI). Workflow: make
+manual corrections normally; the corrections log accumulates (model said,
+user said) pairs that can be cross-referenced with the detection log's
+centroids/margins to diagnose *why* each wrong call happened.
 
 ## 11. Known Gaps (as of 2026-07-21)
 
