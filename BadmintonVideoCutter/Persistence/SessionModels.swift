@@ -29,6 +29,10 @@ enum SessionEvent: Codable, Equatable {
     /// Manual winner for the match's FINAL play (no next serve encodes it).
     /// Mid-game winner overrides are stored as the next play's serve pin.
     case pointWinnerOverridden(pointID: UUID, side: String)
+    /// Manual running-score override AFTER a play (players miscounted on
+    /// court, or the chain drifted). Later plays accumulate from it.
+    /// Audit-only; last event per play wins.
+    case scoreAdjusted(pointID: UUID, scoreA: Int, scoreB: Int)
     case savedToPool(rallyClips: Int, backgroundClips: Int)
     case exported(output: String)
     case undo

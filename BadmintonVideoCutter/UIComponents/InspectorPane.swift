@@ -987,6 +987,7 @@ struct HistoryPanel: View {
         case .pointFeedback: return "exclamationmark.bubble"
         case .serveSideOverridden: return "arrow.left.arrow.right"
         case .pointWinnerOverridden: return "trophy"
+        case .scoreAdjusted: return "number.circle"
         case .gameSplitInserted: return "flag.checkered.2.crossed"
         case .savedToPool: return "square.and.arrow.down.on.square"
         case .exported: return "square.and.arrow.up"
@@ -1024,6 +1025,8 @@ struct HistoryPanel: View {
         case .pointWinnerOverridden(let id, let side):
             let label = ServeDetector.ServeSide(rawValue: side).map { appState.serveABLabel($0, forPointID: id) } ?? side
             return "Set winner of \(pointLabel(id, run: run)) to \(label)"
+        case .scoreAdjusted(let id, let a, let b):
+            return "Set score after \(pointLabel(id, run: run)) to \(a):\(b)"
         case .savedToPool(let rally, let background):
             return "Saved for training: \(rally) rally + \(background) background clips"
         case .exported(let output):

@@ -15,6 +15,9 @@ struct PointListView: View {
     @State private var batchSelection: Set<UUID> = []
     /// Score-fix flow: game being corrected + entered final score.
     @State private var fixScoreGame: Game?
+    @State private var setScoreTarget: GamePoint?
+    @State private var setScoreA = ""
+    @State private var setScoreB = ""
     @State private var fixScoreA = ""
     @State private var fixScoreB = ""
     /// Game-separator confirmation.
@@ -114,6 +117,22 @@ struct PointListView: View {
             Button("Cancel", role: .cancel) { fixScoreGame = nil }
         } message: {
             Text("Enter the real final score (A:B). The app re-analyzes serve confidence and flips only the least-confident winner calls — your pinned plays are never touched, and every flip is undoable.")
+        }
+        .alert(
+            "Set score after play #\(setScoreTarget?.pointNumber ?? 0)",
+            isPresented: Binding(get: { setScoreTarget != nil }, set: { if !$0 { setScoreTarget = nil } })
+        ) {
+            TextField("Side A", text: $setScoreA)
+            TextField("Side B", text: $setScoreB)
+            Button("Set score") {
+                if let target = setScoreTarget, let a = Int(setScoreA), let b = Int(setScoreB) {
+                    appState.adjustScore(pointID: target.id, scoreA: a, scoreB: b)
+                }
+                setScoreTarget = nil
+            }
+            Button("Cancel", role: .cancel) { setScoreTarget = nil }
+        } message: {
+            Text("The actual score right after this play (useful when the players themselves miscounted on court). Later plays continue counting from it; earlier plays are untouched.")
         }
         .confirmationDialog(
             "Start a new game here?",
@@ -253,6 +272,11 @@ struct PointListView: View {
                                     onRecalculateScore: {
                                         appState.recalculateScores(fromPointID: point.id)
                                     },
+                                    onSetScore: {
+                                        setScoreTarget = point
+                                        setScoreA = ""
+                                        setScoreB = ""
+                                    },
                                     onTap: {
                                         handleTap(on: point)
                                     }
@@ -371,6 +395,11 @@ struct PointListView: View {
                     },
                     onRecalculateScore: {
                         appState.recalculateScores(fromPointID: entry.point.id)
+                    },
+                    onSetScore: {
+                        setScoreTarget = entry.point
+                        setScoreA = ""
+                        setScoreB = ""
                     },
                     onTap: {
                         handleTap(on: entry.point)
@@ -621,6 +650,7 @@ struct PointRow: View {
     var onOverrideWinner: ((Bool) -> Void)?
     var onStartNewGame: (() -> Void)?
     var onRecalculateScore: (() -> Void)?
+    var onSetScore: (() -> Void)?
     let onTap: () -> Void
 
     /// After-score with the component that just incremented rendered bold in
@@ -804,6 +834,7 @@ struct PointRow: View {
                     }
                 }
                 Button("Recalculate score from here") { onRecalculateScore?() }
+                Button("Set score after this play…") { onSetScore?() }
                 Button("Start new game from this play…") { onStartNewGame?() }
             }
             Divider()

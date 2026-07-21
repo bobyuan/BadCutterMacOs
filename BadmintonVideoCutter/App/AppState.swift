@@ -800,6 +800,7 @@ final class AppState: ObservableObject {
         var ratings: [UUID: HighlightRating] = [:]
         var overrides: [UUID: ServeDetector.ServeSide] = [:]
         var winners: [UUID: ServeDetector.ServeSide] = [:]
+        var adjustments: [UUID: ServeDetector.PointScore] = [:]
         for event in sessionEvents {
             if case .highlightRated(let pointID, let raw) = event {
                 if let rating = HighlightRating(rawValue: raw) {
@@ -816,10 +817,14 @@ final class AppState: ObservableObject {
                let side = ServeDetector.ServeSide(rawValue: raw) {
                 winners[pointID] = side
             }
+            if case .scoreAdjusted(let pointID, let a, let b) = event {
+                adjustments[pointID] = ServeDetector.PointScore(scoreA: a, scoreB: b)
+            }
         }
         pointRatings = ratings
         serveOverrides = overrides
         winnerOverrides = winners
+        scoreAdjustments = adjustments
     }
 
     /// Derived review state for the point-list chip.
@@ -1528,6 +1533,23 @@ final class AppState: ObservableObject {
         statusMessage = "A and B swapped for game \(game.gameNumber) — Side A is now the \(serveSideLabel(flipped).lowercased()) side."
     }
 
+    /// Manually set the running score AFTER a play — for matches where the
+    /// players themselves miscounted (visible from their serving positions)
+    /// or the chain drifted. Later plays accumulate from the set value;
+    /// earlier rows are untouched (I-1).
+    func adjustScore(pointID: UUID, scoreA: Int, scoreB: Int) {
+        guard scoreA >= 0, scoreB >= 0, let target = point(withID: pointID) else { return }
+        let before = pointScores[pointID].map { "\($0.scoreA):\($0.scoreB)" } ?? "—"
+        appendCorrectionLog("""
+            SET SCORE play #\(target.pointNumber)
+            model said: \(scoreTraces[pointID] ?? "no trace")  [displayed \(before)]
+            user set:   \(scoreA):\(scoreB) (running score after this play; later plays continue from it)
+            """)
+        recordEvent(.scoreAdjusted(pointID: pointID, scoreA: scoreA, scoreB: scoreB))
+        computeAllScores()
+        statusMessage = "Score after play #\(target.pointNumber) set to \(scoreA):\(scoreB) — later plays continue from it."
+    }
+
     /// Rules violation for a game's score chain, if any (e.g. 23:9).
     func scoreViolation(for game: Game) -> String? {
         let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
@@ -1728,7 +1750,8 @@ final class AppState: ObservableObject {
                 serveSides: serveSides.merging(serveOverrides) { _, manual in manual },
                 nextGameFirstServe: nextGameFirstServe,
                 firstServe: anchorSide(for: game),
-                lastPointWinner: lastActive.flatMap { winnerOverrides[$0.id] }
+                lastPointWinner: lastActive.flatMap { winnerOverrides[$0.id] },
+                adjustments: scoreAdjustments
             )
             allScores.merge(result.scores) { _, new in new }
             scoreTraces.merge(result.trace) { _, new in new }
@@ -1738,6 +1761,10 @@ final class AppState: ObservableObject {
         refreshHighlightScores()
         writeScoreDiagnosticsLog()
     }
+
+    /// Manual running-score overrides (players miscounted on court), derived
+    /// from scoreAdjusted ledger events; keyed by play, last event wins.
+    private(set) var scoreAdjustments: [UUID: ServeDetector.PointScore] = [:]
 
     /// Per-play winner-derivation traces from the last score computation.
     private var scoreTraces: [UUID: String] = [:]

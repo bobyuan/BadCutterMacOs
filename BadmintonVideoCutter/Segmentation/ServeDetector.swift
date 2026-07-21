@@ -265,12 +265,14 @@ final class ServeDetector {
         serveSides: [UUID: ServeSide],
         nextGameFirstServe: ServeSide? = nil,
         firstServe explicitFirstServe: ServeSide? = nil,
-        lastPointWinner: ServeSide? = nil
+        lastPointWinner: ServeSide? = nil,
+        adjustments: [UUID: PointScore] = [:]
     ) -> [UUID: PointScore] {
         computeScoresWithTrace(points: points, serveSides: serveSides,
                                nextGameFirstServe: nextGameFirstServe,
                                firstServe: explicitFirstServe,
-                               lastPointWinner: lastPointWinner).scores
+                               lastPointWinner: lastPointWinner,
+                               adjustments: adjustments).scores
     }
 
     /// Same computation, plus a per-play natural-language derivation trace
@@ -280,7 +282,8 @@ final class ServeDetector {
         serveSides: [UUID: ServeSide],
         nextGameFirstServe: ServeSide? = nil,
         firstServe explicitFirstServe: ServeSide? = nil,
-        lastPointWinner: ServeSide? = nil
+        lastPointWinner: ServeSide? = nil,
+        adjustments: [UUID: PointScore] = [:]
     ) -> (scores: [UUID: PointScore], trace: [UUID: String]) {
         let activePoints = points.filter { $0.reviewStatus != .deleted }
         guard !activePoints.isEmpty else { return ([:], [:]) }
@@ -353,6 +356,14 @@ final class ServeDetector {
                 trace[activePoints[i].id] = "winner=\(guessed) — GUESS (\(how); assumed leader won)"
             }
 
+            // Manual running-score override: the user knows the score after
+            // this play (players miscounted on court, or the chain drifted).
+            // Later plays accumulate from the set value.
+            if let adj = adjustments[activePoints[i].id] {
+                scoreA = adj.scoreA
+                scoreB = adj.scoreB
+                trace[activePoints[i].id] = (trace[activePoints[i].id] ?? "") + " ; score MANUALLY SET to \(adj.scoreA):\(adj.scoreB)"
+            }
             results[activePoints[i].id] = PointScore(scoreA: scoreA, scoreB: scoreB)
         }
 

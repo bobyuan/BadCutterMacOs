@@ -228,6 +228,23 @@ final class ShadowEvalTests: XCTestCase {
         assertScore(scores[points[1].id], 1, 1)   // override B, not serve-based A
     }
 
+    func testManualScoreAdjustmentRebasesLaterPlays() {
+        // Players miscounted on court: user sets the score after p2 to 5:1.
+        // p1 and p2's own computation are as detected; p3 continues from the
+        // SET value, not the computed one.
+        let points = scorePoints(3)
+        let sides: [UUID: ServeDetector.ServeSide] = [
+            points[0].id: .left, points[1].id: .left, points[2].id: .left
+        ]
+        let scores = ServeDetector.computeScores(
+            points: points, serveSides: sides, nextGameFirstServe: .left,
+            firstServe: .left,
+            adjustments: [points[1].id: ServeDetector.PointScore(scoreA: 5, scoreB: 1)])
+        assertScore(scores[points[0].id], 1, 0)   // untouched before the set point
+        assertScore(scores[points[1].id], 5, 1)   // the manual value
+        assertScore(scores[points[2].id], 6, 1)   // continues from 5:1
+    }
+
     // MARK: - Cluster split (G1/G3)
 
     func testClusterSplitHandlesUnbalancedServes() {
