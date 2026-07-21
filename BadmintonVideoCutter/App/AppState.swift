@@ -1401,6 +1401,88 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Rules violation for a game's score chain, if any (e.g. 23:9).
+    func scoreViolation(for game: Game) -> String? {
+        let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+        let ordered = active.compactMap { point in
+            pointScores[point.id].map { (pointID: point.id, score: $0) }
+        }
+        guard ordered.count == active.count else { return nil }
+        return ScoreValidator.firstViolation(orderedScores: ordered)?.reason
+    }
+
+    /// Game separator: this play starts a new game. Ledger correction (⌘Z).
+    func startNewGame(atPointID pointID: UUID) {
+        guard let target = point(withID: pointID) else { return }
+        recordEvent(.gameSplitInserted(beforePointID: pointID))
+        rematerializeFromSession()
+        statusMessage = "New game starts at \(String(format: "%d:%02d", Int(target.start) / 60, Int(target.start) % 60)) — scores restart 0:0 there. ⌘Z to undo."
+    }
+
+    /// The user's hint flow: given the TRUE final score, re-analyze serve
+    /// confidence and flip the least-confident winner attributions (never
+    /// user-pinned ones) until the chain reaches it.
+    func correctFinalScore(gameID: UUID, targetA: Int, targetB: Int) {
+        guard let game = games.first(where: { $0.id == gameID }), let url = currentAssetURL else { return }
+        let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+        guard targetA >= 0, targetB >= 0, targetA + targetB == active.count else {
+            statusMessage = "\(targetA):\(targetB) totals \(targetA + targetB) plays but this game has \(active.count) — fix plays first (delete/add), then correct the score."
+            return
+        }
+        statusMessage = "Analyzing serve confidence to reconcile the score…"
+        let allActive = activePoints
+        Task {
+            let detection = await ServeDetector.detectServesWithConfidence(videoURL: url, points: allActive)
+            guard self.currentAssetURL == url else { return }
+
+            let winners = active.map { self.winnerIsA(of: $0.id) }
+            let currentA = winners.filter { $0 == true }.count
+            let delta = currentA - targetA
+            guard delta != 0 else {
+                self.statusMessage = "Score already matches \(targetA):\(targetB)."
+                return
+            }
+
+            // Confidence of winner(i) = detection margin of the play that
+            // serves next; pinned = any user override involved.
+            var margins: [Double] = []
+            var pinned: [Bool] = []
+            for (i, playPoint) in active.enumerated() {
+                if let globalIdx = allActive.firstIndex(where: { $0.id == playPoint.id }),
+                   globalIdx < allActive.count - 1 {
+                    let next = allActive[globalIdx + 1]
+                    margins.append(detection.margins[next.id] ?? 0)
+                    pinned.append(self.serveOverrides[next.id] != nil || self.winnerOverrides[playPoint.id] != nil)
+                } else {
+                    margins.append(.greatestFiniteMagnitude)
+                    pinned.append(self.winnerOverrides[playPoint.id] != nil)
+                }
+                _ = i
+            }
+
+            let flips = ScoreValidator.chooseFlips(winnersIsA: winners, margins: margins, pinned: pinned, delta: delta)
+            guard flips.count == abs(delta) else {
+                self.statusMessage = "Couldn't reconcile automatically — only \(flips.count) adjustable plays found (\(abs(delta)) needed). Pin winners manually via right-click."
+                return
+            }
+
+            let flipToA = delta < 0
+            for idx in flips {
+                let playPoint = active[idx]
+                let anchor = self.anchorSide(for: game) ?? .left
+                let winnerSide: ServeDetector.ServeSide = flipToA ? anchor : (anchor == .left ? .right : .left)
+                if let globalIdx = allActive.firstIndex(where: { $0.id == playPoint.id }), globalIdx < allActive.count - 1 {
+                    self.recordEvent(.serveSideOverridden(pointID: allActive[globalIdx + 1].id, side: winnerSide.rawValue))
+                } else {
+                    self.recordEvent(.pointWinnerOverridden(pointID: playPoint.id, side: winnerSide.rawValue))
+                }
+            }
+            self.computeAllScores()
+            let numbers = flips.map { "#\(active[$0].pointNumber)" }.sorted().joined(separator: ", ")
+            self.statusMessage = "Flipped the least-confident winners (\(numbers)) → \(targetA):\(targetB). Review them — each is undoable via right-click or ⌘Z."
+        }
+    }
+
     /// The A/B label for one side within the game containing a point.
     func serveABLabel(_ side: ServeDetector.ServeSide, forPointID pointID: UUID) -> String {
         guard let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }) else {

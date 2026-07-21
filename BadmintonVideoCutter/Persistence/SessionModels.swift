@@ -16,6 +16,8 @@ enum SessionEvent: Codable, Equatable {
     case pointRestored(pointID: UUID)
     case pointAdded(pointID: UUID, start: TimeInterval, end: TimeInterval)
     case boundaryChanged(pointID: UUID, edge: BoundaryEdge, from: TimeInterval, to: TimeInterval)
+    /// Start a new game at this point (game separator). Correction: undoable.
+    case gameSplitInserted(beforePointID: UUID)
     case highlightRated(pointID: UUID, rating: String)
     /// A 👎 reason (detection complaint). Audit-only: the resulting fix is
     /// recorded as ordinary correction events; the reason label itself is
@@ -36,7 +38,7 @@ enum SessionEvent: Codable, Equatable {
     /// materialization and undo/redo).
     var isCorrection: Bool {
         switch self {
-        case .pointDeleted, .pointRestored, .pointAdded, .boundaryChanged:
+        case .pointDeleted, .pointRestored, .pointAdded, .boundaryChanged, .gameSplitInserted:
             return true
         default:
             return false
@@ -157,6 +159,7 @@ enum SessionMaterializer {
     /// Apply corrections to a copy of the baseline games.
     static func apply(events: [SessionEvent], to baselineGames: [Game]) -> [Game] {
         var games = baselineGames
+        var gameSplits: Set<UUID> = []
         for event in events {
             switch event {
             case .pointDeleted(let pointID):
@@ -175,13 +178,40 @@ enum SessionMaterializer {
                 }
             case .pointAdded(let pointID, let start, let end):
                 insertPoint(&games, pointID: pointID, start: start, end: end)
+            case .gameSplitInserted(let pointID):
+                gameSplits.insert(pointID)
             default:
                 break
             }
         }
-        // Boundary edits can reorder points in time; keep the list
-        // chronological and the numbering sequential.
+        // Game separators: a marked point starts a new game.
+        if !gameSplits.isEmpty {
+            var splitGames: [Game] = []
+            for game in games {
+                var parts: [[GamePoint]] = []
+                var current: [GamePoint] = []
+                for point in game.points.sorted(by: { $0.start < $1.start }) {
+                    if gameSplits.contains(point.id), !current.isEmpty {
+                        parts.append(current)
+                        current = []
+                    }
+                    current.append(point)
+                }
+                parts.append(current)
+                for (i, part) in parts.enumerated() {
+                    splitGames.append(Game(
+                        gameNumber: 0,
+                        points: part,
+                        breakAfter: i == parts.count - 1 ? game.breakAfter : nil
+                    ))
+                }
+            }
+            games = splitGames
+        }
+        // Boundary edits can reorder points in time; keep games and points
+        // chronologically numbered.
         for i in games.indices {
+            games[i].gameNumber = i + 1
             renumber(&games[i])
         }
         return games

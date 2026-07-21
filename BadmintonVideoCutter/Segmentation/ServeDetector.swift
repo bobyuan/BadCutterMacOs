@@ -35,8 +35,15 @@ final class ServeDetector {
     }
 
     static func detectServesWithAxis(videoURL: URL, points: [GamePoint]) async -> (sides: [UUID: ServeSide], axis: Axis) {
+        let full = await detectServesWithConfidence(videoURL: videoURL, points: points)
+        return (full.sides, full.axis)
+    }
+
+    /// Full detection incl. per-point confidence: the centroid's distance from
+    /// the split median (0 = coin flip, larger = more certain).
+    static func detectServesWithConfidence(videoURL: URL, points: [GamePoint]) async -> (sides: [UUID: ServeSide], axis: Axis, margins: [UUID: Double]) {
         let pointData = points.map { (id: $0.id, start: $0.start) }
-        guard !pointData.isEmpty else { return ([:], .horizontal) }
+        guard !pointData.isEmpty else { return ([:], .horizontal, [:]) }
 
         return await Task.detached {
             let asset = AVURLAsset(url: videoURL)
@@ -72,7 +79,7 @@ final class ServeDetector {
             }
 
             guard centroids.count >= 2 else {
-                return (Dictionary(uniqueKeysWithValues: centroids.map { ($0.id, ServeSide.unknown) }), .horizontal)
+                return (Dictionary(uniqueKeysWithValues: centroids.map { ($0.id, ServeSide.unknown) }), .horizontal, [:])
             }
 
             // Step 2: Determine which axis best separates the two players
@@ -92,9 +99,11 @@ final class ServeDetector {
             // A small dead zone around the median handles ambiguous cases.
             let deadZone = 0.02  // 2% of frame dimension
             var results: [UUID: ServeSide] = [:]
+            var margins: [UUID: Double] = [:]
 
             for (i, entry) in centroids.enumerated() {
                 let val = values[i]
+                margins[entry.id] = abs(val - median)
                 if val < median - deadZone {
                     results[entry.id] = .left
                 } else if val > median + deadZone {
@@ -104,7 +113,7 @@ final class ServeDetector {
                 }
             }
 
-            return (results, axis)
+            return (results, axis, margins)
         }.value
     }
 
@@ -239,5 +248,46 @@ final class ServeDetector {
         }
 
         return results
+    }
+}
+
+/// Badminton rules sanity checks over a game's running score.
+enum ScoreValidator {
+
+    /// A score is terminal when the game is over at that state.
+    static func isTerminal(_ a: Int, _ b: Int) -> Bool {
+        let hi = max(a, b), lo = min(a, b)
+        if hi == 30 { return true }
+        return hi >= 21 && hi - lo >= 2
+    }
+
+    /// First rules violation in an ordered score chain, if any:
+    /// points recorded after the game already ended, or a column past 30.
+    static func firstViolation(orderedScores: [(pointID: UUID, score: ServeDetector.PointScore)])
+        -> (pointID: UUID, reason: String)? {
+        for (index, entry) in orderedScores.enumerated() where index > 0 {
+            let prev = orderedScores[index - 1].score
+            if isTerminal(prev.scoreA, prev.scoreB) {
+                return (entry.pointID,
+                        "Game already ended at \(prev.scoreA):\(prev.scoreB) — later plays can't belong to it.")
+            }
+            let cur = entry.score
+            if max(cur.scoreA, cur.scoreB) > 30 {
+                return (entry.pointID, "A game never goes past 30.")
+            }
+        }
+        return nil
+    }
+
+    /// Which plays' winners to flip so the A-win count moves by `delta`
+    /// (positive = flip A-wins to B). Prefers the LOWEST-confidence calls;
+    /// pinned (user-confirmed) plays are never chosen. Returns indices.
+    static func chooseFlips(winnersIsA: [Bool?], margins: [Double], pinned: [Bool], delta: Int) -> [Int] {
+        guard delta != 0 else { return [] }
+        let flipFromA = delta > 0
+        let candidates = winnersIsA.indices
+            .filter { winnersIsA[$0] == flipFromA && !pinned[$0] }
+            .sorted { margins[$0] < margins[$1] }
+        return Array(candidates.prefix(abs(delta)))
     }
 }

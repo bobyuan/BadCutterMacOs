@@ -11,6 +11,12 @@ struct PointListView: View {
     @State private var showReanalyzeConfirm = false
     /// Batch verdicts (DESIGN §8.5): membership toggled by ⌘-click.
     @State private var batchSelection: Set<UUID> = []
+    /// Score-fix flow: game being corrected + entered final score.
+    @State private var fixScoreGame: Game?
+    @State private var fixScoreA = ""
+    @State private var fixScoreB = ""
+    /// Game-separator confirmation.
+    @State private var gameSplitCandidate: GamePoint?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -84,6 +90,36 @@ struct PointListView: View {
 
                 saveForTrainingButton
             }
+        }
+        .alert(
+            "Correct the final score",
+            isPresented: Binding(get: { fixScoreGame != nil }, set: { if !$0 { fixScoreGame = nil } })
+        ) {
+            TextField("Side A", text: $fixScoreA)
+            TextField("Side B", text: $fixScoreB)
+            Button("Reconcile") {
+                if let game = fixScoreGame, let a = Int(fixScoreA), let b = Int(fixScoreB) {
+                    appState.correctFinalScore(gameID: game.id, targetA: a, targetB: b)
+                }
+                fixScoreGame = nil
+            }
+            Button("Cancel", role: .cancel) { fixScoreGame = nil }
+        } message: {
+            Text("Enter the real final score (A:B). The app re-analyzes serve confidence and flips only the least-confident winner calls — your pinned plays are never touched, and every flip is undoable.")
+        }
+        .confirmationDialog(
+            "Start a new game here?",
+            isPresented: Binding(get: { gameSplitCandidate != nil }, set: { if !$0 { gameSplitCandidate = nil } })
+        ) {
+            Button("Start new game from #\(gameSplitCandidate?.pointNumber ?? 0)") {
+                if let point = gameSplitCandidate {
+                    appState.startNewGame(atPointID: point.id)
+                }
+                gameSplitCandidate = nil
+            }
+            Button("Cancel", role: .cancel) { gameSplitCandidate = nil }
+        } message: {
+            Text("Plays from this one onward become a new game with a fresh 0:0 score and their own Side A (its first server). ⌘Z undoes.")
         }
         .alert("Re-analyze this video?", isPresented: $showReanalyzeConfirm) {
             Button("Re-analyze — keep history") { appState.analyzeCurrentVideo() }
@@ -202,6 +238,9 @@ struct PointListView: View {
                                     onOverrideWinner: { isA in
                                         appState.overrideWinner(pointID: point.id, winnerIsA: isA)
                                     },
+                                    onStartNewGame: {
+                                        gameSplitCandidate = point
+                                    },
                                     onRecalculateScore: {
                                         appState.recalculateScores(fromPointID: point.id)
                                     },
@@ -211,7 +250,26 @@ struct PointListView: View {
                                 )
                             }
                         } header: {
-                            GameSectionHeader(game: game, pointScores: appState.pointScores)
+                            VStack(alignment: .leading, spacing: 2) {
+                                GameSectionHeader(game: game, pointScores: appState.pointScores)
+                                if let violation = appState.scoreViolation(for: game) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundStyle(.red)
+                                            .font(.caption)
+                                        Text(violation)
+                                            .font(.caption2)
+                                            .foregroundStyle(.red)
+                                        Button("Fix score…") {
+                                            fixScoreGame = game
+                                            fixScoreA = ""
+                                            fixScoreB = ""
+                                        }
+                                        .buttonStyle(.link)
+                                        .font(.caption2)
+                                    }
+                                }
+                            }
                         }
 
                         if game.breakAfter != nil && game.id != appState.games.last?.id {
@@ -263,6 +321,9 @@ struct PointListView: View {
                     winnerIsA: appState.winnerIsA(of: entry.point.id),
                     onOverrideWinner: { isA in
                         appState.overrideWinner(pointID: entry.point.id, winnerIsA: isA)
+                    },
+                    onStartNewGame: {
+                        gameSplitCandidate = entry.point
                     },
                     onRecalculateScore: {
                         appState.recalculateScores(fromPointID: entry.point.id)
@@ -342,6 +403,7 @@ struct PointRow: View {
     var isOverlapping: Bool = false
     var winnerIsA: Bool?
     var onOverrideWinner: ((Bool) -> Void)?
+    var onStartNewGame: (() -> Void)?
     var onRecalculateScore: (() -> Void)?
     let onTap: () -> Void
 
@@ -375,6 +437,14 @@ struct PointRow: View {
                 Text(String(format: "(%.1fs)", point.duration))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if let winnerIsA {
+                    Text(winnerIsA ? "A" : "B")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(winnerIsA ? Color.blue : Color.orange)
+                        .frame(width: 10)
+                        .help(winnerIsA ? "Side A won this play" : "Side B won this play")
+                }
 
                 if isOverlapping {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -493,6 +563,7 @@ struct PointRow: View {
                     }
                 }
                 Button("Recalculate score from here") { onRecalculateScore?() }
+                Button("Start new game from this play…") { onStartNewGame?() }
             }
             Divider()
             Button(point.reviewStatus == .deleted ? "Restore" : "Delete", action: onToggleDelete)

@@ -189,6 +189,66 @@ final class ShadowEvalTests: XCTestCase {
         assertScore(scores[points[2].id], 0, 3)
     }
 
+    // MARK: - Score rules validation
+
+    func testValidatorFlagsPlayAfterGameEnd() {
+        let points = scorePoints(3)
+        // 20:9 → 21:9 (terminal) → 22:9 (illegal continuation)
+        let ordered = [
+            (pointID: points[0].id, score: ServeDetector.PointScore(scoreA: 20, scoreB: 9)),
+            (pointID: points[1].id, score: ServeDetector.PointScore(scoreA: 21, scoreB: 9)),
+            (pointID: points[2].id, score: ServeDetector.PointScore(scoreA: 22, scoreB: 9))
+        ]
+        let violation = ScoreValidator.firstViolation(orderedScores: ordered)
+        XCTAssertEqual(violation?.pointID, points[2].id)
+        XCTAssertTrue(violation?.reason.contains("21:9") ?? false)
+    }
+
+    func testValidatorAcceptsDeuceAndCap() {
+        XCTAssertFalse(ScoreValidator.isTerminal(21, 20))   // deuce continues
+        XCTAssertTrue(ScoreValidator.isTerminal(22, 20))
+        XCTAssertTrue(ScoreValidator.isTerminal(30, 29))    // cap
+        XCTAssertTrue(ScoreValidator.isTerminal(21, 9))
+        XCTAssertFalse(ScoreValidator.isTerminal(20, 9))
+        let points = scorePoints(2)
+        let ordered = [
+            (pointID: points[0].id, score: ServeDetector.PointScore(scoreA: 20, scoreB: 20)),
+            (pointID: points[1].id, score: ServeDetector.PointScore(scoreA: 21, scoreB: 20))
+        ]
+        XCTAssertNil(ScoreValidator.firstViolation(orderedScores: ordered))
+    }
+
+    func testChooseFlipsPrefersLowConfidenceAndSkipsPinned() {
+        // A-wins at 0,1,3; need 2 flips A→B. Index 1 pinned; lowest margins 3 then 0.
+        let winners: [Bool?] = [true, true, false, true]
+        let margins: [Double] = [0.10, 0.01, 0.50, 0.02]
+        let pinned = [false, true, false, false]
+        let flips = ScoreValidator.chooseFlips(winnersIsA: winners, margins: margins, pinned: pinned, delta: 2)
+        XCTAssertEqual(Set(flips), Set([3, 0]))
+        XCTAssertTrue(ScoreValidator.chooseFlips(winnersIsA: winners, margins: margins, pinned: pinned, delta: 0).isEmpty)
+    }
+
+    func testGameSplitMaterializesTwoGames() {
+        let points = scorePoints(4)
+        let games = [Game(gameNumber: 1, points: points)]
+        let result = SessionMaterializer.apply(
+            events: [.gameSplitInserted(beforePointID: points[2].id)],
+            to: games
+        )
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(result[0].points.map(\.pointNumber), [1, 2])
+        XCTAssertEqual(result[1].points.map(\.pointNumber), [1, 2])
+        XCTAssertEqual(result[1].points.first?.id, points[2].id)
+        XCTAssertEqual(result.map(\.gameNumber), [1, 2])
+        // Undo restores one game
+        let undone = SessionMaterializer.apply(
+            events: SessionMaterializer.effectiveCorrections(
+                from: [.gameSplitInserted(beforePointID: points[2].id), .undo]),
+            to: games
+        )
+        XCTAssertEqual(undone.count, 1)
+    }
+
     // MARK: - Model Registry
 
     private func makeTempDir() throws -> URL {
