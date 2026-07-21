@@ -270,6 +270,7 @@ struct PointListView: View {
                                     isBatchSelected: batchSelection.contains(point.id),
                                     isOverlapping: appState.overlappingPointIDs.contains(point.id),
                                     winnerIsA: appState.winnerIsA(of: point.id),
+                                    winnerProvenance: appState.winnerProvenance(of: point.id),
                                     onOverrideWinner: { isA in
                                         appState.overrideWinner(pointID: point.id, winnerIsA: isA)
                                     },
@@ -401,6 +402,7 @@ struct PointListView: View {
                     isBatchSelected: batchSelection.contains(entry.point.id),
                     isOverlapping: appState.overlappingPointIDs.contains(entry.point.id),
                     winnerIsA: appState.winnerIsA(of: entry.point.id),
+                    winnerProvenance: appState.winnerProvenance(of: entry.point.id),
                     onOverrideWinner: { isA in
                         appState.overrideWinner(pointID: entry.point.id, winnerIsA: isA)
                     },
@@ -668,6 +670,7 @@ struct PointRow: View {
     var isBatchSelected: Bool = false
     var isOverlapping: Bool = false
     var winnerIsA: Bool?
+    var winnerProvenance: AppState.WinnerProvenance?
     var onOverrideWinner: ((Bool) -> Void)?
     var onStartNewGame: (() -> Void)?
     var onRecalculateScore: (() -> Void)?
@@ -737,6 +740,28 @@ struct PointRow: View {
                         .foregroundStyle(winnerIsA ? Color.blue : Color.orange)
                         .frame(width: 10)
                         .help(winnerIsA ? "Side A won this play" : "Side B won this play")
+                }
+                // G7: how this winner was decided — pinned by you, inferred
+                // from the sequence rules, or an evidence-free guess.
+                // Directly detected winners stay clean (no badge).
+                switch winnerProvenance {
+                case .pinned:
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 7))
+                        .foregroundStyle(.secondary)
+                        .help("You set this winner — automatic passes never change it")
+                case .inferred:
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.purple)
+                        .help("Inferred from the score rules and neighboring serves — verify if it looks off")
+                case .guessed:
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.yellow)
+                        .help("No serve evidence for this winner — right-click to set who won")
+                case .detected, nil:
+                    EmptyView()
                 }
 
                 if isOverlapping {

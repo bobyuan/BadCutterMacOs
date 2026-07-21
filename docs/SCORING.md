@@ -220,12 +220,20 @@ centroids/margins to diagnose *why* each wrong call happened.
 | # | Gap | Layer | Severity |
 |---|-----|-------|----------|
 | G1 | ~~Median split misclassifies plays whenever serving is unbalanced~~ **FIXED 2026-07-21**: largest-gap cluster split (`clusterSplit`/`classifySides`), dead zone on the boundary, unknowns for mushy distributions | L1 | ~~critical~~ |
-| G2 | No sequence inference; isolated misdetections propagate straight into scores | L2 | **high** |
+| G2 | ~~No sequence inference~~ **FIXED 2026-07-21**: `inferSides` DP (play × side × A-wins) maximizes margin-weighted evidence over LEGAL chains only; pins hard constraints; fills unknowns; validated vs Python reference | L2 | ~~high~~ |
 | G3 | ~~Failed frame grabs recorded as (0.5, 0.5) centroids, polluting the split~~ **FIXED 2026-07-21**: failures excluded from clustering, play marked unknown | L1 | ~~high~~ |
-| G4 | Sampling window anchored to play start (pre-roll), not the serve moment | L1 | medium |
-| G5 | Shuttle positions (cached, strong) unused for serve side | L1 | high |
-| G6 | Axis re-chosen every detection run; can flip and scramble stored tokens | L1 | medium |
-| G7 | Guessed winners ("leader won") indistinguishable from detected ones in UI | L5 | medium |
+| G4 | ~~Window anchored to play start~~ **FIXED 2026-07-21**: `serveAnchorTime` — first audio onset in start+0..2s | L1 | ~~medium~~ |
+| G5 | ~~Shuttle positions unused~~ **FIXED 2026-07-21**: `shuttleCentroid` — first ≤5 tracked positions near the serve moment are the primary evidence; motion centroid only as fallback; per-source cluster splits | L1 | ~~high~~ |
+| G6 | ~~Axis re-chosen every run~~ **FIXED 2026-07-21**: incremental passes reuse the persisted baseline axis (`preferredAxis`); fresh analysis re-chooses (shuttle-group variance preferred) | L1 | ~~medium~~ |
+| G7 | ~~Guessed winners indistinguishable~~ **FIXED 2026-07-21**: per-row provenance badges — 📌 pinned, ✨ inferred, ❓ guessed (detected stays clean); `[inferred]` tier in logs | L5 | ~~medium~~ |
 | G8 | Margins measured from the median are not real confidence; reconciliation ranks flips by them | L1/L4 | medium |
 | G9 | No way to release a pin except undo | L4 | low |
 | G10 | Doubles: centroid mixes partner/receiver; shuttle-first + serve-moment anchoring mitigates | L1 | medium |
+
+## 12. Score ↔ Analysis History (verified 2026-07-21)
+
+Scores are fully run-scoped: each analysis run's `baseline.json` carries its
+own serve sides/axis/margins/inferred set (rewritten on every mutation), and
+all pins/adjustments are run-tagged ledger events. Re-analyzing creates a
+new run with a freshly detected score set; switching to a historic run
+restores that run's scores, pins, and provenance exactly.

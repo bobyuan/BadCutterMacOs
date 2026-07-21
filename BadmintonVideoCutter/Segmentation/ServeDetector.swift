@@ -39,11 +39,66 @@ final class ServeDetector {
         return (full.sides, full.axis)
     }
 
-    /// Full detection incl. per-point confidence: the centroid's distance from
-    /// the split median (0 = coin flip, larger = more certain).
-    static func detectServesWithConfidence(videoURL: URL, points: [GamePoint]) async -> (sides: [UUID: ServeSide], axis: Axis, margins: [UUID: Double]) {
+    // MARK: - Serve-moment + Shuttle Evidence (G4/G5)
+
+    /// The serve moment inside a play: the first audio onset shortly after
+    /// the play's start (plays begin with pre-roll), else the start itself.
+    static func serveAnchorTime(start: TimeInterval, onsets: [TimeInterval]) -> TimeInterval {
+        onsets.first { $0 >= start && $0 <= start + 2.0 } ?? start
+    }
+
+    /// Where the shuttle first appears in a play — it originates at the
+    /// server. Cached TrackNet positions, no video decode. nil when the
+    /// shuttle wasn't tracked early in the play.
+    static func shuttleCentroid(
+        start: TimeInterval,
+        frames: [FeatureFrame],
+        onsets: [TimeInterval]
+    ) -> (x: Double, y: Double)? {
+        let t0 = serveAnchorTime(start: start, onsets: onsets)
+        var xs: [Double] = []
+        var ys: [Double] = []
+        for frame in frames where frame.timestamp >= t0 - 0.2 {
+            if frame.timestamp > t0 + 1.2 { break }
+            if let pos = frame.shuttlecockPosition {
+                xs.append(pos.x)
+                ys.append(pos.y)
+                if xs.count >= 5 { break }
+            }
+        }
+        guard xs.count >= 2 else { return nil }
+        return (xs.reduce(0, +) / Double(xs.count), ys.reduce(0, +) / Double(ys.count))
+    }
+
+    /// Full detection incl. per-point confidence. Evidence per play, in
+    /// order of preference (G5): the shuttle's first tracked positions
+    /// (cached frames, originates at the server), else the motion centroid
+    /// of video frames — both sampled around the serve moment (G4: first
+    /// audio onset after the play start). Sides come from a largest-gap
+    /// cluster split per evidence source; `preferredAxis` (G6) reuses the
+    /// persisted axis so incremental passes can't flip it.
+    static func detectServesWithConfidence(
+        videoURL: URL,
+        points: [GamePoint],
+        frames: [FeatureFrame] = [],
+        onsets: [TimeInterval] = [],
+        preferredAxis: Axis? = nil
+    ) async -> (sides: [UUID: ServeSide], axis: Axis, margins: [UUID: Double]) {
         let pointData = points.map { (id: $0.id, start: $0.start, number: $0.pointNumber) }
         guard !pointData.isEmpty else { return ([:], .horizontal, [:]) }
+
+        // Shuttle evidence comes from cached frames — resolve before the
+        // video-decoding task.
+        var shuttle: [UUID: (x: Double, y: Double)] = [:]
+        if !frames.isEmpty {
+            for point in pointData {
+                if let c = shuttleCentroid(start: point.start, frames: frames, onsets: onsets) {
+                    shuttle[point.id] = c
+                }
+            }
+        }
+        let shuttleEvidence = shuttle
+        let onsetTimes = onsets
 
         return await Task.detached {
             let asset = AVURLAsset(url: videoURL)
@@ -53,19 +108,24 @@ final class ServeDetector {
             generator.requestedTimeToleranceBefore = CMTime(seconds: 0.05, preferredTimescale: 600)
             generator.requestedTimeToleranceAfter = CMTime(seconds: 0.05, preferredTimescale: 600)
 
-            // Step 1: Compute motion centroid for each rally start
-            var centroids: [(id: UUID, cx: Double, cy: Double)] = []
+            // Step 1: evidence per play — shuttle first, motion fallback.
+            var centroids: [(id: UUID, cx: Double, cy: Double, source: String)] = []
             var log: [String] = []
             log.append("════════ SERVE DETECTION RUN — \(Date()) ════════")
-            log.append("video: \(videoURL.lastPathComponent)  plays: \(pointData.count)")
-            log.append("window: start+0.1 / +0.5 / +0.9 (motion centroid of frame pairs)")
+            log.append("video: \(videoURL.lastPathComponent)  plays: \(pointData.count)  shuttle evidence: \(shuttleEvidence.count)")
+            log.append("window: serve moment (first audio onset in start+0..2s, else start) — shuttle positions preferred, motion centroid fallback")
             var grabFailures = 0
             var failedIDs: [UUID] = []
 
             for point in pointData {
-                let t0 = CMTime(seconds: point.start + 0.1, preferredTimescale: 600)
-                let t1 = CMTime(seconds: point.start + 0.5, preferredTimescale: 600)
-                let t2 = CMTime(seconds: point.start + 0.9, preferredTimescale: 600)
+                if let c = shuttleEvidence[point.id] {
+                    centroids.append((id: point.id, cx: c.x, cy: c.y, source: "shuttle"))
+                    continue
+                }
+                let anchor = serveAnchorTime(start: point.start, onsets: onsetTimes)
+                let t0 = CMTime(seconds: anchor + 0.1, preferredTimescale: 600)
+                let t1 = CMTime(seconds: anchor + 0.5, preferredTimescale: 600)
+                let t2 = CMTime(seconds: anchor + 0.9, preferredTimescale: 600)
 
                 guard let img0 = try? generator.copyCGImage(at: t0, actualTime: nil),
                       let img1 = try? generator.copyCGImage(at: t1, actualTime: nil) else {
@@ -80,9 +140,9 @@ final class ServeDetector {
                 // Average with a second frame pair for robustness
                 if let img2 = try? generator.copyCGImage(at: t2, actualTime: nil) {
                     let (cx2, cy2) = computeMotionCentroid(img0, img2)
-                    centroids.append((id: point.id, cx: (cx1 + cx2) / 2, cy: (cy1 + cy2) / 2))
+                    centroids.append((id: point.id, cx: (cx1 + cx2) / 2, cy: (cy1 + cy2) / 2, source: "motion"))
                 } else {
-                    centroids.append((id: point.id, cx: cx1, cy: cy1))
+                    centroids.append((id: point.id, cx: cx1, cy: cy1, source: "motion"))
                 }
             }
 
@@ -91,45 +151,52 @@ final class ServeDetector {
                 return (Dictionary(uniqueKeysWithValues: pointData.map { ($0.id, ServeSide.unknown) }), .horizontal, [:])
             }
 
-            // Step 2: Determine which axis best separates the two players
+            // Step 2: axis — reuse the persisted one (G6) so incremental
+            // passes can't flip it; else pick by spread, preferring the
+            // shuttle group (cleaner signal) when it covers enough plays.
             let xValues = centroids.map(\.cx)
             let yValues = centroids.map(\.cy)
-            let xVariance = variance(xValues)
-            let yVariance = variance(yValues)
+            let shuttleOnly = centroids.filter { $0.source == "shuttle" }
+            let axisBasis = shuttleOnly.count >= max(3, centroids.count / 2) ? shuttleOnly : centroids
+            let xVariance = variance(axisBasis.map(\.cx))
+            let yVariance = variance(axisBasis.map(\.cy))
+            let axis: Axis = preferredAxis ?? (xVariance >= yVariance ? .horizontal : .vertical)
 
-            // Use the axis with more spread
-            let axis: Axis = xVariance >= yVariance ? .horizontal : .vertical
-            let values = axis == .horizontal ? xValues : yValues
-
-            // Step 3: cluster split at the largest interior gap. Rally
-            // scoring means the winner keeps serving, so serve counts are
-            // unbalanced (a 21:9 game is ~70/30) — a median split would
-            // mechanically misclassify the dominant server's plays. The gap
-            // between the two position clusters is the honest boundary.
-            let classified = classifySides(values: values)
+            // Step 3: largest-gap cluster split PER EVIDENCE SOURCE (shuttle
+            // and motion measure the same physical axis but with different
+            // biases — mixing them shifts the boundary). Rally scoring makes
+            // serve counts unbalanced, which the gap split accepts.
             var results: [UUID: ServeSide] = [:]
             var margins: [UUID: Double] = [:]
+            log.append(String(format: "axis: %@%@ (xVar=%.5f yVar=%.5f, basis=%@)",
+                              axis == .horizontal ? "horizontal (left|right)" : "vertical (far|near)",
+                              preferredAxis != nil ? " [persisted]" : "",
+                              xVariance, yVariance,
+                              axisBasis.count == shuttleOnly.count ? "shuttle" : "all"))
 
-            log.append(String(format: "axis: %@ (xVar=%.5f yVar=%.5f)", axis == .horizontal ? "horizontal (left|right)" : "vertical (far|near)", xVariance, yVariance))
-            log.append(String(format: "split: LARGEST-GAP center=%.4f gapWidth=%.4f deadZone=%.3f (cluster split)", classified.point, classified.gap, clusterDeadZone))
-            log.append(String(format: "sorted axis values: %@", values.sorted().map { String(format: "%.3f", $0) }.joined(separator: " ")))
-
-            for (i, entry) in centroids.enumerated() {
-                results[entry.id] = classified.sides[i]
-                margins[entry.id] = classified.margins[i]
-                let number = pointData.first(where: { $0.id == entry.id })?.number ?? 0
-                let start = pointData.first(where: { $0.id == entry.id })?.start ?? 0
-                log.append(String(format: "play #%d t=%.1fs  centroid=(%.3f,%.3f)  axisVal=%.4f  margin=%.4f  → %@",
-                                  number, start, entry.cx, entry.cy, values[i], classified.margins[i],
-                                  classified.sides[i].rawValue.uppercased()))
+            for source in ["shuttle", "motion"] {
+                let group = centroids.filter { $0.source == source }
+                guard !group.isEmpty else { continue }
+                let values = group.map { axis == .horizontal ? $0.cx : $0.cy }
+                let classified = classifySides(values: values)
+                log.append(String(format: "%@ split: LARGEST-GAP center=%.4f gapWidth=%.4f deadZone=%.3f  values: %@",
+                                  source, classified.point, classified.gap, clusterDeadZone,
+                                  values.sorted().map { String(format: "%.3f", $0) }.joined(separator: " ")))
+                for (i, entry) in group.enumerated() {
+                    results[entry.id] = classified.sides[i]
+                    margins[entry.id] = classified.margins[i]
+                    let number = pointData.first(where: { $0.id == entry.id })?.number ?? 0
+                    let start = pointData.first(where: { $0.id == entry.id })?.start ?? 0
+                    log.append(String(format: "play #%d t=%.1fs  src=%@  pos=(%.3f,%.3f)  axisVal=%.4f  margin=%.4f  → %@",
+                                      number, start, source, entry.cx, entry.cy, values[i], classified.margins[i],
+                                      classified.sides[i].rawValue.uppercased()))
+                }
             }
             for id in failedIDs {
                 results[id] = .unknown
             }
-            let counts = (l: classified.sides.filter { $0 == .left }.count,
-                          r: classified.sides.filter { $0 == .right }.count,
-                          u: classified.sides.filter { $0 == .unknown }.count + failedIDs.count)
-            log.append("sides: left=\(counts.l) right=\(counts.r) unknown=\(counts.u) (unbalance is EXPECTED under rally scoring)")
+            let all = results.values
+            log.append("sides: left=\(all.filter { $0 == .left }.count) right=\(all.filter { $0 == .right }.count) unknown=\(all.filter { $0 == .unknown }.count) (unbalance is EXPECTED under rally scoring)")
             if grabFailures > 0 {
                 log.append("grab failures: \(grabFailures) — excluded from clustering (no placeholder pollution)")
             }
@@ -189,6 +256,83 @@ final class ServeDetector {
             }
         }
         return (sides, margins, split.point, split.gap)
+    }
+
+    // MARK: - Sequence Inference (G2)
+
+    /// Small bonus for a side CHANGE on plays whose own serve is unobserved:
+    /// empirically (corrections log 2026-07-21) unknown serves correlate
+    /// with side switches — mixed motion at the changeover confuses the
+    /// classifier, and "leader kept serving" guesses were wrong 9/9.
+    private static let unknownSwitchBonus = 0.005
+
+    /// Maximum-evidence serve sequence for ONE game whose implied score
+    /// chain is LEGAL (no play after a terminal score). Dynamic program
+    /// over (play, side, A-wins): emissions are classification margins
+    /// (+m matching the observation, −m contradicting, 0 for unknown),
+    /// pins are hard constraints. Fills unknown serves from context and
+    /// repairs isolated misdetections that would make the chain illegal —
+    /// impossible scores like 23:9 cannot be produced.
+    /// Returns one side per play; falls back to the raw observations when
+    /// pins themselves force an illegal chain (validator will flag it).
+    static func inferSides(
+        observed: [ServeSide?],
+        margins: [Double],
+        pinned: [ServeSide?]
+    ) -> [ServeSide] {
+        let n = observed.count
+        let fallback: [ServeSide] = (0..<n).map { pinned[$0] ?? observed[$0] ?? .unknown }
+        guard n >= 2 else { return fallback }
+
+        // nil = this (play, side) choice is forbidden by a pin.
+        func emission(_ i: Int, _ side: ServeSide) -> Double? {
+            if let pin = pinned[i], pin != .unknown {
+                return side == pin ? 0 : nil
+            }
+            guard let obs = observed[i], obs != .unknown else { return 0 }
+            return side == obs ? margins[i] : -margins[i]
+        }
+
+        struct Key: Hashable {
+            let left: Bool
+            let aWins: Int
+        }
+        var best: (score: Double, sides: [ServeSide])?
+
+        for anchor in [ServeSide.left, .right] {
+            var layer: [Key: (score: Double, path: [ServeSide])] = [:]
+            for side in [ServeSide.left, .right] {
+                guard let e = emission(0, side) else { continue }
+                layer[Key(left: side == .left, aWins: 0)] = (e, [side])
+            }
+            for i in 1..<n {
+                var next: [Key: (score: Double, path: [ServeSide])] = [:]
+                for (key, value) in layer {
+                    let prevSide: ServeSide = key.left ? .left : .right
+                    for side in [ServeSide.left, .right] {
+                        guard var e = emission(i, side) else { continue }
+                        if observed[i] == nil || observed[i] == .unknown, side != prevSide {
+                            e += unknownSwitchBonus
+                        }
+                        // Server of play i is the winner of play i-1.
+                        let aWins = key.aWins + (side == anchor ? 1 : 0)
+                        // Play i exists, so the score after play i-1 must not
+                        // already be terminal.
+                        guard !ScoreValidator.isTerminal(aWins, i - aWins) else { continue }
+                        let candidate = (score: value.score + e, path: value.path + [side])
+                        let nextKey = Key(left: side == .left, aWins: aWins)
+                        if next[nextKey] == nil || next[nextKey]!.score < candidate.score {
+                            next[nextKey] = candidate
+                        }
+                    }
+                }
+                layer = next
+            }
+            for (_, value) in layer where best == nil || value.score > best!.score {
+                best = (value.score, value.path)
+            }
+        }
+        return best?.sides ?? fallback
     }
 
     // MARK: - Motion Analysis

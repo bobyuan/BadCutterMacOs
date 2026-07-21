@@ -269,6 +269,60 @@ final class ShadowEvalTests: XCTestCase {
                       "tightly packed values must not be force-split, got \(result.sides)")
     }
 
+    // MARK: - Sequence inference (G2) + shuttle evidence (G5)
+
+    func testInferSidesRepairsIllegalChain() {
+        // 22 observed serves all .left with anchor left → A wins 21 straight
+        // (terminal at play 21) with a 22nd play following — illegal. The
+        // lowest-margin observation (index 9) must flip to make the chain
+        // legal; confident neighbors must not move.
+        var observed: [ServeDetector.ServeSide?] = Array(repeating: .left, count: 22)
+        observed[0] = .left
+        var margins = Array(repeating: 0.06, count: 22)
+        margins[9] = 0.001
+        let pinned: [ServeDetector.ServeSide?] = Array(repeating: nil, count: 22)
+        let result = ServeDetector.inferSides(observed: observed, margins: margins, pinned: pinned)
+        XCTAssertEqual(result[9], .right, "lowest-margin serve should flip")
+        for (i, side) in result.enumerated() where i != 9 {
+            XCTAssertEqual(side, .left, "confident serve #\(i) must not move")
+        }
+    }
+
+    func testInferSidesFillsUnknownsAndRespectsPins() {
+        let observed: [ServeDetector.ServeSide?] = [.left, nil, .left, nil]
+        let margins = [0.05, 0.0, 0.05, 0.0]
+        let pinned: [ServeDetector.ServeSide?] = [nil, nil, nil, .right]
+        let result = ServeDetector.inferSides(observed: observed, margins: margins, pinned: pinned)
+        XCTAssertEqual(result[3], .right, "pin is a hard constraint")
+        XCTAssertNotEqual(result[1], .unknown, "unknown serves get filled from context")
+        XCTAssertEqual(result[0], .left)
+        XCTAssertEqual(result[2], .left)
+    }
+
+    func testShuttleCentroidUsesEarlyPositionsNearOnset() {
+        // Shuttle tracked at ~(0.3, 0.4) right after the serve onset at t=11;
+        // later rally positions (0.8) must not dilute the serve location.
+        var frames: [FeatureFrame] = []
+        for i in 0..<40 {
+            var f = FeatureFrame(timestamp: 10.0 + Double(i) * 0.1, motionScore: 0.1, audioScore: 0)
+            if i >= 10 && i < 14 {
+                f.shuttlecockPosition = (x: 0.3, y: 0.4)
+            } else if i > 20 {
+                f.shuttlecockPosition = (x: 0.8, y: 0.8)
+            }
+            frames.append(f)
+        }
+        let c = ServeDetector.shuttleCentroid(start: 10.0, frames: frames, onsets: [11.0])
+        XCTAssertNotNil(c)
+        XCTAssertEqual(c!.x, 0.3, accuracy: 0.01)
+        XCTAssertEqual(c!.y, 0.4, accuracy: 0.01)
+    }
+
+    func testServeAnchorTimePicksFirstOnsetInWindow() {
+        XCTAssertEqual(ServeDetector.serveAnchorTime(start: 10, onsets: [5, 10.8, 12.5]), 10.8)
+        XCTAssertEqual(ServeDetector.serveAnchorTime(start: 10, onsets: [20]), 10)
+    }
+
     // MARK: - Score rules validation
 
     func testValidatorFlagsPlayAfterGameEnd() {

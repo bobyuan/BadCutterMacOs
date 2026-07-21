@@ -83,6 +83,8 @@ struct SessionBaseline: Codable {
     var serveAxis: ServeDetector.Axis?
     /// Detection confidence margins (nil on baselines from older versions).
     var serveMargins: [UUID: Double]?
+    /// Plays whose side came from sequence inference, not direct evidence.
+    var serveInferredIDs: [UUID]?
 }
 
 /// Identity record for a session directory.

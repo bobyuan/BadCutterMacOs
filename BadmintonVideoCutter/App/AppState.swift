@@ -1305,6 +1305,7 @@ final class AppState: ObservableObject {
         serveSides = loaded.baseline.serveSides
         serveAxis = loaded.baseline.serveAxis ?? .horizontal
         serveMargins = loaded.baseline.serveMargins ?? [:]
+        serveInferredIDs = Set(loaded.baseline.serveInferredIDs ?? [])
 
         let effective = SessionMaterializer.effectiveCorrections(from: loaded.events)
         games = SessionMaterializer.apply(events: effective, to: loaded.baseline.games)
@@ -1607,7 +1608,10 @@ final class AppState: ObservableObject {
         statusMessage = "Analyzing serve confidence to reconcile the score…"
         let allActive = activePoints
         Task {
-            let detection = await ServeDetector.detectServesWithConfidence(videoURL: url, points: allActive)
+            let detection = await ServeDetector.detectServesWithConfidence(
+                videoURL: url, points: allActive,
+                frames: self.featureFrames, onsets: self.audioSignals.onsets,
+                preferredAxis: self.sessionBaseline?.serveAxis)
             guard self.currentAssetURL == url else { return }
 
             let winners = active.map { self.winnerIsA(of: $0.id) }
@@ -1693,6 +1697,7 @@ final class AppState: ObservableObject {
         baseline.serveSides = serveSides
         baseline.serveAxis = serveAxis
         baseline.serveMargins = serveMargins
+        baseline.serveInferredIDs = Array(serveInferredIDs)
         sessionBaseline = baseline
         sessionStore.rewriteBaseline(baseline, for: url)
     }
@@ -1722,7 +1727,10 @@ final class AppState: ObservableObject {
             // around the centroid distribution's median, so a small or
             // one-sided subset would mis-split. Fresh results are applied
             // only to the dirty plays; manual pins stay untouched.
-            let detection = await ServeDetector.detectServesWithConfidence(videoURL: url, points: active)
+            let detection = await ServeDetector.detectServesWithConfidence(
+                videoURL: url, points: active,
+                frames: self.featureFrames, onsets: self.audioSignals.onsets,
+                preferredAxis: self.sessionBaseline?.serveAxis)
             guard !Task.isCancelled, self.currentAssetURL == url else { return }
             self.serveAxis = detection.axis
             self.serveMargins.merge(detection.margins) { _, new in new }
@@ -1732,6 +1740,7 @@ final class AppState: ObservableObject {
                 }
             }
             self.serveDirtyIDs.subtract(dirty.map(\.id))
+            self.applySequenceInference()
             self.computeAllScores()
             self.statusMessage = "Serve parties re-detected (\(dirty.count) play\(dirty.count == 1 ? "" : "s")) — scores recalculated."
             self.persistServeState()
@@ -1743,10 +1752,13 @@ final class AppState: ObservableObject {
         let allPoints = games.flatMap(\.points)
 
         Task {
-            let detection = await ServeDetector.detectServesWithConfidence(videoURL: url, points: allPoints)
+            let detection = await ServeDetector.detectServesWithConfidence(
+                videoURL: url, points: allPoints,
+                frames: featureFrames, onsets: audioSignals.onsets)
             self.serveSides = detection.sides
             self.serveAxis = detection.axis
             self.serveMargins = detection.margins
+            applySequenceInference()
             computeAllScores()
 
             // Serve detection finishes after the baseline is saved — fold the
@@ -1797,15 +1809,63 @@ final class AppState: ObservableObject {
     private var scoreTraces: [UUID: String] = [:]
     /// Detection confidence margins from the last serve-detection pass.
     private var serveMargins: [UUID: Double] = [:]
+    /// Plays whose serve side came from sequence inference (G2), not direct
+    /// evidence — shown as "inferred" in provenance and badges.
+    private(set) var serveInferredIDs: Set<UUID> = []
+
+    /// Run the game-level sequence inference (G2) over the current serve
+    /// sides: fills unknowns from context, repairs sides that would imply an
+    /// illegal chain. Pins are hard constraints; only non-pinned plays move.
+    private func applySequenceInference() {
+        var inferred: Set<UUID> = []
+        for game in games {
+            let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+            guard active.count >= 2 else { continue }
+            let observed: [ServeDetector.ServeSide?] = active.map { serveSides[$0.id] }
+            let pins: [ServeDetector.ServeSide?] = active.map { serveOverrides[$0.id] }
+            let margins: [Double] = active.map { serveMargins[$0.id] ?? 0 }
+            let result = ServeDetector.inferSides(observed: observed, margins: margins, pinned: pins)
+            for (i, p) in active.enumerated() where pins[i] == nil && result[i] != .unknown {
+                if observed[i] == nil || observed[i] == .unknown || observed[i] != result[i] {
+                    inferred.insert(p.id)
+                }
+                serveSides[p.id] = result[i]
+            }
+        }
+        serveInferredIDs = inferred
+    }
 
     /// One play's serve side with provenance and confidence, for diagnostics.
     private func serveProvenance(_ id: UUID) -> String {
         if let o = serveOverrides[id] { return "\(o.rawValue)[PINNED]" }
         if let d = serveSides[id] {
+            if serveInferredIDs.contains(id) { return "\(d.rawValue)[inferred]" }
             let m = serveMargins[id].map { String(format: " m=%.4f", $0) } ?? ""
             return "\(d.rawValue)[detected\(m)]"
         }
         return "—[missing]"
+    }
+
+    /// How a play's displayed winner was decided (G7: provenance badges).
+    enum WinnerProvenance {
+        case pinned, detected, inferred, guessed
+    }
+
+    func winnerProvenance(of pointID: UUID) -> WinnerProvenance? {
+        guard pointScores[pointID] != nil,
+              let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }) else { return nil }
+        let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+        guard let idx = active.firstIndex(where: { $0.id == pointID }) else { return nil }
+        if scoreAdjustments[pointID] != nil || scoreAdjustmentsBefore[pointID] != nil { return .pinned }
+        if idx < active.count - 1 {
+            let next = active[idx + 1].id
+            if serveOverrides[next] != nil { return .pinned }
+            if serveInferredIDs.contains(next) { return .inferred }
+            if let side = serveSides[next], side != .unknown { return .detected }
+            return .guessed
+        }
+        if winnerOverrides[pointID] != nil { return .pinned }
+        return .guessed
     }
 
     /// Append-only correction audit: every manual score action captures the
