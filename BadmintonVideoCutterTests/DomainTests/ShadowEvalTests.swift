@@ -189,6 +189,45 @@ final class ShadowEvalTests: XCTestCase {
         assertScore(scores[points[2].id], 0, 3)
     }
 
+    func testCorrectingPlayTwoDoesNotMovePlayOne() {
+        // User scenario (2026-07-21): chain read 1:0, 2:0. Correcting play 2's
+        // winner to B must give 1:0, 1:1 — play 1 untouched, columns not
+        // re-anchored. With the anchor held fixed and play 2's serve pinned
+        // (as pinDisplayedWinners records), only serve(3) changes.
+        let points = scorePoints(3)
+        let before: [UUID: ServeDetector.ServeSide] = [
+            points[1].id: .right, points[2].id: .right
+        ]
+        let anchor = ServeDetector.ServeSide.right
+        let scoresBefore = ServeDetector.computeScores(
+            points: points, serveSides: before, firstServe: anchor)
+        assertScore(scoresBefore[points[0].id], 1, 0)
+        assertScore(scoresBefore[points[1].id], 2, 0)
+
+        // Correction: winner of play 2 = B -> pin serve(3) = .left. The
+        // anchor is frozen and serve(2) pinned to its displayed value.
+        let after: [UUID: ServeDetector.ServeSide] = [
+            points[0].id: anchor, points[1].id: .right, points[2].id: .left
+        ]
+        let scoresAfter = ServeDetector.computeScores(
+            points: points, serveSides: after, firstServe: anchor)
+        assertScore(scoresAfter[points[0].id], 1, 0)   // former play unchanged
+        assertScore(scoresAfter[points[1].id], 1, 1)   // corrected play only
+    }
+
+    func testExplicitLastPointWinnerBeatsNextGameFirstServe() {
+        // The final play of a game with a following game: an explicit winner
+        // override must beat nextGameFirstServe (that serve can be an anchor
+        // pin for the NEXT game, not evidence about this play).
+        let points = scorePoints(2)
+        let sides: [UUID: ServeDetector.ServeSide] = [points[0].id: .left, points[1].id: .left]
+        let scores = ServeDetector.computeScores(
+            points: points, serveSides: sides, nextGameFirstServe: .left,
+            firstServe: .left, lastPointWinner: .right)
+        assertScore(scores[points[0].id], 1, 0)
+        assertScore(scores[points[1].id], 1, 1)   // override B, not serve-based A
+    }
+
     // MARK: - Score rules validation
 
     func testValidatorFlagsPlayAfterGameEnd() {

@@ -1392,8 +1392,11 @@ final class AppState: ObservableObject {
     private func freezeAnchorIfNeeded(for game: Game) {
         let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
         guard let first = active.first else { return }
-        let firstSide = effectiveServeSide(for: first.id)
-        guard firstSide == nil || firstSide == .unknown else { return }
+        // Pin even a DETECTED first side: detected values can be re-detected
+        // later (e.g. after a boundary drag marks the play dirty), and a
+        // flipped first side re-labels every A/B column in the game. The pin
+        // equals the current anchor, so nothing visibly changes now.
+        guard serveOverrides[first.id] == nil else { return }
         let anchor = anchorSide(for: game) ?? .left
         recordEvent(.serveSideOverridden(pointID: first.id, side: anchor.rawValue))
     }
@@ -1458,9 +1461,12 @@ final class AppState: ObservableObject {
             let gameActive = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
             guard let gi = gameActive.firstIndex(where: { $0.id == p.id }) else { continue }
             if gi < gameActive.count - 1 {
+                // Pin DETECTED serves too, not just missing ones: a detected
+                // side can be overwritten by later re-detection (dirty plays),
+                // which would rewrite this row. The pin equals the displayed
+                // winner, so nothing visibly changes.
                 let next = gameActive[gi + 1]
-                let side = effectiveServeSide(for: next.id)
-                if side == nil || side == .unknown {
+                if serveOverrides[next.id] == nil {
                     recordEvent(.serveSideOverridden(pointID: next.id, side: winnerSide.rawValue))
                 }
             } else if winnerOverrides[p.id] == nil {
