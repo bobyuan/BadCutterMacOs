@@ -1079,6 +1079,7 @@ final class AppState: ObservableObject {
             serveSides.removeValue(forKey: p.id)
             serveDirtyIDs.insert(p.id)
         }
+        persistServeState()
         computeAllScores()
         scheduleServeRedetection()
         statusMessage = "Re-detecting serve parties for \(affected.count) plays from #\(target.pointNumber) (vision model) — scores refresh in a moment."
@@ -1293,6 +1294,7 @@ final class AppState: ObservableObject {
         audioSignals = loaded.audioSignals ?? AudioSignals()
         serveSides = loaded.baseline.serveSides
         serveAxis = loaded.baseline.serveAxis ?? .horizontal
+        serveMargins = loaded.baseline.serveMargins ?? [:]
 
         let effective = SessionMaterializer.effectiveCorrections(from: loaded.events)
         games = SessionMaterializer.apply(events: effective, to: loaded.baseline.games)
@@ -1635,6 +1637,19 @@ final class AppState: ObservableObject {
         statusMessage = "Serve pinned to \(serveABLabel(side, forPointID: pointID)) — scores recalculated."
     }
 
+    /// Write the current serve state (sides, axis, margins) into the run's
+    /// baseline immediately — scores are derived from these plus the ledger
+    /// (already appended per event), so quitting at ANY moment preserves
+    /// exactly the scores on screen.
+    private func persistServeState() {
+        guard let url = currentAssetURL, var baseline = sessionBaseline else { return }
+        baseline.serveSides = serveSides
+        baseline.serveAxis = serveAxis
+        baseline.serveMargins = serveMargins
+        sessionBaseline = baseline
+        sessionStore.rewriteBaseline(baseline, for: url)
+    }
+
     /// Points whose start moved since their serve side was detected.
     private var serveDirtyIDs: Set<UUID> = []
     private var serveRedetectTask: Task<Void, Never>?
@@ -1672,12 +1687,7 @@ final class AppState: ObservableObject {
             self.serveDirtyIDs.subtract(dirty.map(\.id))
             self.computeAllScores()
             self.statusMessage = "Serve parties re-detected (\(dirty.count) play\(dirty.count == 1 ? "" : "s")) — scores recalculated."
-            if var baseline = self.sessionBaseline {
-                baseline.serveSides = self.serveSides
-                baseline.serveAxis = detection.axis
-                self.sessionBaseline = baseline
-                self.sessionStore.rewriteBaseline(baseline, for: url)
-            }
+            self.persistServeState()
         }
     }
 
@@ -1694,12 +1704,7 @@ final class AppState: ObservableObject {
 
             // Serve detection finishes after the baseline is saved — fold the
             // sides into the persisted baseline so restored sessions have them.
-            if var baseline = sessionBaseline {
-                baseline.serveSides = detection.sides
-                baseline.serveAxis = detection.axis
-                sessionBaseline = baseline
-                sessionStore.rewriteBaseline(baseline, for: url)
-            }
+            persistServeState()
         }
     }
 

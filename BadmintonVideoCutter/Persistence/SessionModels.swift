@@ -74,6 +74,8 @@ struct SessionBaseline: Codable {
     var serveSides: [UUID: ServeDetector.ServeSide] = [:]
     /// Frame axis that separates the parties (nil on pre-axis baselines).
     var serveAxis: ServeDetector.Axis?
+    /// Detection confidence margins (nil on baselines from older versions).
+    var serveMargins: [UUID: Double]?
 }
 
 /// Identity record for a session directory.
