@@ -1372,6 +1372,16 @@ final class AppState: ObservableObject {
         return (aIsLeft ? "Side A" : "Side B", aIsLeft ? "Side B" : "Side A")
     }
 
+    /// The score entering a play: the previous active play's score, 0:0 for
+    /// the game's first active play. nil when no score is computed yet.
+    func scoreBefore(of pointID: UUID) -> ServeDetector.PointScore? {
+        guard pointScores[pointID] != nil,
+              let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }) else { return nil }
+        let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+        guard let idx = active.firstIndex(where: { $0.id == pointID }) else { return nil }
+        return idx > 0 ? pointScores[active[idx - 1].id] : ServeDetector.PointScore(scoreA: 0, scoreB: 0)
+    }
+
     /// Who won a play under the current scores (true = Side A), derived by
     /// comparing its score row with the previous play's.
     func winnerIsA(of pointID: UUID) -> Bool? {

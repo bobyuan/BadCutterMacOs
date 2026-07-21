@@ -226,6 +226,7 @@ struct PointListView: View {
                                     isSelected: point.id == selectedPointID,
                                     playheadTime: playheadTime,
                                     score: appState.pointScores[point.id],
+                                    scoreBefore: appState.scoreBefore(of: point.id),
                                     chip: appState.reviewChip(for: point),
                                     rating: appState.pointRatings[point.id],
                                     highlightScore: appState.highlightScores[point.id],
@@ -344,6 +345,7 @@ struct PointListView: View {
                     isSelected: entry.point.id == selectedPointID,
                     playheadTime: playheadTime,
                     score: appState.pointScores[entry.point.id],
+                    scoreBefore: appState.scoreBefore(of: entry.point.id),
                     chip: appState.reviewChip(for: entry.point),
                     rating: appState.pointRatings[entry.point.id],
                     highlightScore: appState.highlightScores[entry.point.id],
@@ -604,6 +606,7 @@ struct PointRow: View {
     var isSelected: Bool = false
     var playheadTime: TimeInterval = 0
     var score: ServeDetector.PointScore?
+    var scoreBefore: ServeDetector.PointScore?
     var chip: ReviewChip = .auto
     var rating: HighlightRating?
     var highlightScore: Double?
@@ -619,6 +622,21 @@ struct PointRow: View {
     var onStartNewGame: (() -> Void)?
     var onRecalculateScore: (() -> Void)?
     let onTap: () -> Void
+
+    /// After-score with the component that just incremented rendered bold in
+    /// the winning side's color (A blue / B orange).
+    private func scoreAfterText(_ score: ServeDetector.PointScore) -> Text {
+        let before = scoreBefore ?? ServeDetector.PointScore(scoreA: 0, scoreB: 0)
+        let aWon = score.scoreA > before.scoreA
+        let bWon = score.scoreB > before.scoreB
+        return Text("\(score.scoreA)")
+            .fontWeight(aWon ? .bold : .regular)
+            .foregroundColor(aWon ? .blue : .secondary)
+        + Text(":").foregroundColor(.secondary)
+        + Text("\(score.scoreB)")
+            .fontWeight(bWon ? .bold : .regular)
+            .foregroundColor(bWon ? .orange : .secondary)
+    }
 
     private var progress: Double {
         guard point.duration > 0 else { return 0 }
@@ -638,10 +656,20 @@ struct PointRow: View {
                     .frame(width: gameNumber == nil ? 30 : 44, alignment: .leading)
 
                 if let score = score {
-                    Text(score.display)
-                        .font(.caption).monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, alignment: .center)
+                    // Score transition: "before → after", with the winner's
+                    // incremented number bolded in their side's color.
+                    HStack(spacing: 2) {
+                        Text((scoreBefore ?? ServeDetector.PointScore(scoreA: 0, scoreB: 0)).display)
+                            .font(.caption2).monospacedDigit()
+                            .foregroundStyle(.tertiary)
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 7, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                        scoreAfterText(score)
+                            .font(.caption).monospacedDigit()
+                    }
+                    .frame(minWidth: 68, alignment: .center)
+                    .help("Score before this play → after (winner's number highlighted)")
                 }
 
                 Text("\(formatTime(point.start)) – \(formatTime(point.end))")
