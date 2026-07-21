@@ -1068,6 +1068,10 @@ final class AppState: ObservableObject {
     /// re-detects them (a few frame reads), and recomputes the score chain.
     func recalculateScores(fromPointID pointID: UUID) {
         guard let target = point(withID: pointID) else { return }
+        // "From here" means earlier rows must not move: freeze the displayed
+        // chain above this play so the re-detection pass (which also fills
+        // any still-missing earlier serves) cannot rewrite it.
+        pinDisplayedWinners(before: pointID)
         // Strictly AFTER the selected play: its own serve encodes the FORMER
         // play's winner and must not be disturbed by a forward recalculation.
         let affected = activePoints.filter { $0.start > target.start + 0.01 }
@@ -1413,20 +1417,55 @@ final class AppState: ObservableObject {
     /// only the match's final play needs its own winner event.
     func overrideWinner(pointID: UUID, winnerIsA: Bool) {
         guard let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }) else { return }
+        // The user corrects THIS play against the chain they see above it —
+        // make every earlier displayed winner durable first, so neither this
+        // correction nor a later re-detection can ripple backward.
+        pinDisplayedWinners(before: pointID)
         freezeAnchorIfNeeded(for: game)
         let anchor = anchorSide(for: game) ?? .left
         let winnerSide: ServeDetector.ServeSide = winnerIsA ? anchor : (anchor == .left ? .right : .left)
 
-        let allActive = activePoints
-        guard let idx = allActive.firstIndex(where: { $0.id == pointID }) else { return }
-        if idx < allActive.count - 1 {
-            recordEvent(.serveSideOverridden(pointID: allActive[idx + 1].id, side: winnerSide.rawValue))
+        let gameActive = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+        guard let idx = gameActive.firstIndex(where: { $0.id == pointID }) else { return }
+        if idx < gameActive.count - 1 {
+            recordEvent(.serveSideOverridden(pointID: gameActive[idx + 1].id, side: winnerSide.rawValue))
         } else {
+            // Last play of ITS game gets an explicit winner event — pinning
+            // the next game's first serve would re-anchor that game's A/B.
             recordEvent(.pointWinnerOverridden(pointID: pointID, side: winnerSide.rawValue))
         }
         computeAllScores()
         if let number = point(withID: pointID)?.pointNumber {
             statusMessage = "Play #\(number) winner set to Side \(winnerIsA ? "A" : "B") — scores recalculated."
+        }
+    }
+
+    /// Record the currently displayed winner of every active play BEFORE the
+    /// given one as durable overrides: plays whose winner rests on a guessed
+    /// (undetected) next serve get that serve pinned, and game-final plays
+    /// get an explicit winner event. Every pin equals what is already on
+    /// screen, so nothing visibly moves — the rows above a correction are
+    /// simply frozen against backward ripple and future re-detection.
+    private func pinDisplayedWinners(before pointID: UUID) {
+        let all = activePoints
+        guard let limit = all.firstIndex(where: { $0.id == pointID }) else { return }
+        for k in 0..<limit {
+            let p = all[k]
+            guard let isA = winnerIsA(of: p.id),
+                  let game = games.first(where: { $0.points.contains(where: { $0.id == p.id }) }),
+                  let anchor = anchorSide(for: game), anchor != .unknown else { continue }
+            let winnerSide: ServeDetector.ServeSide = isA ? anchor : (anchor == .left ? .right : .left)
+            let gameActive = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+            guard let gi = gameActive.firstIndex(where: { $0.id == p.id }) else { continue }
+            if gi < gameActive.count - 1 {
+                let next = gameActive[gi + 1]
+                let side = effectiveServeSide(for: next.id)
+                if side == nil || side == .unknown {
+                    recordEvent(.serveSideOverridden(pointID: next.id, side: winnerSide.rawValue))
+                }
+            } else if winnerOverrides[p.id] == nil {
+                recordEvent(.pointWinnerOverridden(pointID: p.id, side: winnerSide.rawValue))
+            }
         }
     }
 

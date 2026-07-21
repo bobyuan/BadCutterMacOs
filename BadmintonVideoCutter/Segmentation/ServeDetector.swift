@@ -218,7 +218,12 @@ final class ServeDetector {
             // means one misdetected side corrupts one point, not two, and a
             // point whose own serve is unknown still scores correctly.
             let winnerSide: ServeSide
-            if i < activePoints.count - 1 {
+            if i == activePoints.count - 1, let lastPointWinner, lastPointWinner != .unknown {
+                // An explicit winner override on the game's final play beats
+                // the next game's first serve — that serve may be a pin
+                // anchoring the NEXT game, not evidence about this play.
+                winnerSide = lastPointWinner
+            } else if i < activePoints.count - 1 {
                 winnerSide = serveSides[activePoints[i + 1].id] ?? .unknown
             } else {
                 winnerSide = nextGameFirstServe ?? .unknown
@@ -230,9 +235,7 @@ final class ServeDetector {
                 // Last point with no following game: an explicit winner
                 // override decides; else leader likely won; tie → server.
                 let currentServe = serveSides[activePoints[i].id] ?? .unknown
-                if let lastPointWinner, lastPointWinner != .unknown {
-                    if lastPointWinner == firstServe { scoreA += 1 } else { scoreB += 1 }
-                } else if scoreA != scoreB {
+                if scoreA != scoreB {
                     if scoreA > scoreB { scoreA += 1 } else { scoreB += 1 }
                 } else if currentServe != .unknown, currentServe != firstServe {
                     scoreB += 1
