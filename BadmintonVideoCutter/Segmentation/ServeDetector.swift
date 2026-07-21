@@ -117,7 +117,7 @@ final class ServeDetector {
             // Step 1: evidence per play — shuttle first, motion fallback.
             var centroids: [(id: UUID, cx: Double, cy: Double, source: String)] = []
             var log: [String] = []
-            log.append("════════ SERVE DETECTION RUN — \(Date()) ════════")
+            log.append("════════ SERVE DETECTION RUN — \(logTimestamp()) ════════")
             log.append("video: \(videoURL.lastPathComponent)  plays: \(pointData.count)  shuttle evidence: \(shuttleEvidence.count)")
             log.append("window: serve moment (first audio onset in start+0..2s, else start) — shuttle positions preferred, motion centroid fallback")
             var grabFailures = 0
@@ -224,6 +224,14 @@ final class ServeDetector {
     /// Values closer than this to the split boundary are too ambiguous to
     /// call (normalized frame coordinates).
     static let clusterDeadZone = 0.015
+
+    /// Local-time timestamp for the diagnostic logs (UTC was hard to
+    /// correlate with the user's clock).
+    static func logTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.string(from: Date())
+    }
 
     /// 1-D two-cluster split: the boundary sits mid-way across the largest
     /// gap between sorted neighbor values. Unlike a median split it accepts

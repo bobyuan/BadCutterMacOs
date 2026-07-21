@@ -1918,7 +1918,7 @@ final class AppState: ObservableObject {
     /// model's belief (evidence + margin) vs the user's truth, so wrong
     /// judgments can be analyzed later against /tmp/serve_detection_log.txt.
     private func appendCorrectionLog(_ entry: String) {
-        appendToLog("=== \(Date())\n\(entry)\n", path: "/tmp/score_corrections_log.txt")
+        appendToLog("=== \(ServeDetector.logTimestamp())\n\(entry)\n", path: "/tmp/score_corrections_log.txt")
     }
 
     /// Human-readable dump of the whole winner-detection chain, rewritten on
@@ -1928,7 +1928,7 @@ final class AppState: ObservableObject {
     /// (centroids, split, margins) land in /tmp/serve_detection_log.txt.
     private func writeScoreDiagnosticsLog() {
         var lines: [String] = []
-        lines.append("════════ SCORE CALCULATION RUN — \(Date()) ════════")
+        lines.append("════════ SCORE CALCULATION RUN — \(ServeDetector.logTimestamp()) ════════")
         lines.append("video: \(currentAssetURL?.lastPathComponent ?? "?")  axis: \(serveAxis == .vertical ? "vertical (far|near)" : "horizontal (left|right)")")
         lines.append("rule: winner(N) = server(N+1); A = side serving each game's first play; display A:B")
 
