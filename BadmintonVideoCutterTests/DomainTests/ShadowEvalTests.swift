@@ -228,6 +228,30 @@ final class ShadowEvalTests: XCTestCase {
         assertScore(scores[points[1].id], 1, 1)   // override B, not serve-based A
     }
 
+    // MARK: - Cluster split (G1/G3)
+
+    func testClusterSplitHandlesUnbalancedServes() {
+        // 21:9-style game: 14 serves from one side (~0.30), 6 from the other
+        // (~0.69). A median split would land INSIDE the big cluster and
+        // misclassify several of its members; the gap split must not.
+        let left = (0..<14).map { 0.28 + Double($0) * 0.004 }
+        let right = (0..<6).map { 0.68 + Double($0) * 0.004 }
+        let result = ServeDetector.classifySides(values: left + right)
+        XCTAssertEqual(Array(result.sides[0..<14]), Array(repeating: .left, count: 14))
+        XCTAssertEqual(Array(result.sides[14...]), Array(repeating: .right, count: 6))
+        XCTAssertGreaterThan(result.point, 0.34)
+        XCTAssertLessThan(result.point, 0.68)
+    }
+
+    func testClusterSplitMushyDistributionYieldsUnknowns() {
+        // No real separation (single cluster): honest answer is unknown,
+        // not a forced 50/50 assignment.
+        let values = (0..<20).map { 0.300 + Double($0) * 0.0005 }
+        let result = ServeDetector.classifySides(values: values)
+        XCTAssertTrue(result.sides.allSatisfy { $0 == .unknown },
+                      "tightly packed values must not be force-split, got \(result.sides)")
+    }
+
     // MARK: - Score rules validation
 
     func testValidatorFlagsPlayAfterGameEnd() {

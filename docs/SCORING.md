@@ -219,9 +219,9 @@ centroids/margins to diagnose *why* each wrong call happened.
 
 | # | Gap | Layer | Severity |
 |---|-----|-------|----------|
-| G1 | Median split misclassifies plays whenever serving is unbalanced (i.e. almost always) | L1 | **critical** |
+| G1 | ~~Median split misclassifies plays whenever serving is unbalanced~~ **FIXED 2026-07-21**: largest-gap cluster split (`clusterSplit`/`classifySides`), dead zone on the boundary, unknowns for mushy distributions | L1 | ~~critical~~ |
 | G2 | No sequence inference; isolated misdetections propagate straight into scores | L2 | **high** |
-| G3 | Failed frame grabs recorded as (0.5, 0.5) centroids, polluting the split | L1 | high |
+| G3 | ~~Failed frame grabs recorded as (0.5, 0.5) centroids, polluting the split~~ **FIXED 2026-07-21**: failures excluded from clustering, play marked unknown | L1 | ~~high~~ |
 | G4 | Sampling window anchored to play start (pre-roll), not the serve moment | L1 | medium |
 | G5 | Shuttle positions (cached, strong) unused for serve side | L1 | high |
 | G6 | Axis re-chosen every detection run; can flip and scramble stored tokens | L1 | medium |

@@ -60,6 +60,7 @@ final class ServeDetector {
             log.append("video: \(videoURL.lastPathComponent)  plays: \(pointData.count)")
             log.append("window: start+0.1 / +0.5 / +0.9 (motion centroid of frame pairs)")
             var grabFailures = 0
+            var failedIDs: [UUID] = []
 
             for point in pointData {
                 let t0 = CMTime(seconds: point.start + 0.1, preferredTimescale: 600)
@@ -68,9 +69,9 @@ final class ServeDetector {
 
                 guard let img0 = try? generator.copyCGImage(at: t0, actualTime: nil),
                       let img1 = try? generator.copyCGImage(at: t1, actualTime: nil) else {
-                    centroids.append((id: point.id, cx: 0.5, cy: 0.5))
+                    failedIDs.append(point.id)
                     grabFailures += 1
-                    log.append(String(format: "play #%d t=%.1fs  FRAME GRAB FAILED → placeholder centroid (0.5,0.5) [known gap G3]", point.number, point.start))
+                    log.append(String(format: "play #%d t=%.1fs  FRAME GRAB FAILED → excluded from clustering, side=UNKNOWN", point.number, point.start))
                     continue
                 }
 
@@ -86,7 +87,8 @@ final class ServeDetector {
             }
 
             guard centroids.count >= 2 else {
-                return (Dictionary(uniqueKeysWithValues: centroids.map { ($0.id, ServeSide.unknown) }), .horizontal, [:])
+                // Too few usable centroids (incl. all-failed): every play unknown.
+                return (Dictionary(uniqueKeysWithValues: pointData.map { ($0.id, ServeSide.unknown) }), .horizontal, [:])
             }
 
             // Step 2: Determine which axis best separates the two players
@@ -98,38 +100,38 @@ final class ServeDetector {
             // Use the axis with more spread
             let axis: Axis = xVariance >= yVariance ? .horizontal : .vertical
             let values = axis == .horizontal ? xValues : yValues
-            let sortedValues = values.sorted()
-            let median = sortedValues[sortedValues.count / 2]
 
-            // Step 3: Assign sides based on median split.
-            // Points with centroid below median → left, above → right.
-            // A small dead zone around the median handles ambiguous cases.
-            let deadZone = 0.02  // 2% of frame dimension
+            // Step 3: cluster split at the largest interior gap. Rally
+            // scoring means the winner keeps serving, so serve counts are
+            // unbalanced (a 21:9 game is ~70/30) — a median split would
+            // mechanically misclassify the dominant server's plays. The gap
+            // between the two position clusters is the honest boundary.
+            let classified = classifySides(values: values)
             var results: [UUID: ServeSide] = [:]
             var margins: [UUID: Double] = [:]
 
             log.append(String(format: "axis: %@ (xVar=%.5f yVar=%.5f)", axis == .horizontal ? "horizontal (left|right)" : "vertical (far|near)", xVariance, yVariance))
-            log.append(String(format: "split: MEDIAN=%.4f deadZone=%.2f  [known gap G1: median forces ~50/50 side balance]", median, deadZone))
-            log.append(String(format: "sorted axis values: %@", sortedValues.map { String(format: "%.3f", $0) }.joined(separator: " ")))
+            log.append(String(format: "split: LARGEST-GAP center=%.4f gapWidth=%.4f deadZone=%.3f (cluster split)", classified.point, classified.gap, clusterDeadZone))
+            log.append(String(format: "sorted axis values: %@", values.sorted().map { String(format: "%.3f", $0) }.joined(separator: " ")))
 
             for (i, entry) in centroids.enumerated() {
-                let val = values[i]
-                margins[entry.id] = abs(val - median)
-                if val < median - deadZone {
-                    results[entry.id] = .left
-                } else if val > median + deadZone {
-                    results[entry.id] = .right
-                } else {
-                    results[entry.id] = .unknown
-                }
+                results[entry.id] = classified.sides[i]
+                margins[entry.id] = classified.margins[i]
                 let number = pointData.first(where: { $0.id == entry.id })?.number ?? 0
                 let start = pointData.first(where: { $0.id == entry.id })?.start ?? 0
                 log.append(String(format: "play #%d t=%.1fs  centroid=(%.3f,%.3f)  axisVal=%.4f  margin=%.4f  → %@",
-                                  number, start, entry.cx, entry.cy, val, abs(val - median),
-                                  results[entry.id]!.rawValue.uppercased()))
+                                  number, start, entry.cx, entry.cy, values[i], classified.margins[i],
+                                  classified.sides[i].rawValue.uppercased()))
             }
+            for id in failedIDs {
+                results[id] = .unknown
+            }
+            let counts = (l: classified.sides.filter { $0 == .left }.count,
+                          r: classified.sides.filter { $0 == .right }.count,
+                          u: classified.sides.filter { $0 == .unknown }.count + failedIDs.count)
+            log.append("sides: left=\(counts.l) right=\(counts.r) unknown=\(counts.u) (unbalance is EXPECTED under rally scoring)")
             if grabFailures > 0 {
-                log.append("grab failures: \(grabFailures) (placeholder centroids pollute the split — G3)")
+                log.append("grab failures: \(grabFailures) — excluded from clustering (no placeholder pollution)")
             }
             let block = "\n" + log.joined(separator: "\n") + "\n"
             if let handle = FileHandle(forWritingAtPath: "/tmp/serve_detection_log.txt") {
@@ -142,6 +144,51 @@ final class ServeDetector {
 
             return (results, axis, margins)
         }.value
+    }
+
+    // MARK: - Cluster Split (1-D, unbalanced-friendly)
+
+    /// Values closer than this to the split boundary are too ambiguous to
+    /// call (normalized frame coordinates).
+    static let clusterDeadZone = 0.015
+
+    /// 1-D two-cluster split: the boundary sits mid-way across the largest
+    /// gap between sorted neighbor values. Unlike a median split it accepts
+    /// arbitrarily unbalanced clusters — which rally scoring guarantees,
+    /// since the winner keeps serving.
+    static func clusterSplit(values: [Double]) -> (point: Double, gap: Double) {
+        let sorted = values.sorted()
+        guard sorted.count >= 2 else { return (sorted.first ?? 0.5, 0) }
+        var bestGap = -1.0
+        var bestPoint = sorted[0]
+        for i in 0..<(sorted.count - 1) {
+            let gap = sorted[i + 1] - sorted[i]
+            if gap > bestGap {
+                bestGap = gap
+                bestPoint = (sorted[i + 1] + sorted[i]) / 2
+            }
+        }
+        return (bestPoint, bestGap)
+    }
+
+    /// Classify each value against the cluster split; margin = distance to
+    /// the boundary. Values inside the dead zone are unknown — with a mushy
+    /// distribution (no real gap) most plays honestly come out unknown
+    /// instead of being force-assigned.
+    static func classifySides(values: [Double]) -> (sides: [ServeSide], margins: [Double], point: Double, gap: Double) {
+        let split = clusterSplit(values: values)
+        var sides: [ServeSide] = []
+        var margins: [Double] = []
+        for val in values {
+            let margin = abs(val - split.point)
+            margins.append(margin)
+            if margin <= clusterDeadZone {
+                sides.append(.unknown)
+            } else {
+                sides.append(val < split.point ? .left : .right)
+            }
+        }
+        return (sides, margins, split.point, split.gap)
     }
 
     // MARK: - Motion Analysis
