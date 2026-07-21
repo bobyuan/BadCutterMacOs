@@ -283,6 +283,14 @@ struct PointListView: View {
                                         )) {
                                             legendPopover(for: game)
                                         }
+                                        Button {
+                                            appState.swapSides(for: game)
+                                        } label: {
+                                            Image(systemName: "arrow.left.arrow.right.circle")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .help("A and B are reversed — swap them for this game")
                                     }
                                     .onAppear { loadLegendData(for: game) }
                                 }
@@ -398,6 +406,11 @@ struct PointListView: View {
             Text("Side A served this game's first play. Scores read A:B.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            Button("Wrong way around? Swap A ↔ B") {
+                appState.swapSides(for: game)
+                legendGameID = nil
+            }
+            .font(.caption)
         }
         .padding(10)
     }

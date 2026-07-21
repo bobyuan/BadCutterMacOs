@@ -1420,6 +1420,13 @@ final class AppState: ObservableObject {
     /// only the match's final play needs its own winner event.
     func overrideWinner(pointID: UUID, winnerIsA: Bool) {
         guard let game = games.first(where: { $0.points.contains(where: { $0.id == pointID }) }) else { return }
+        // Selecting the winner the app already believes is a no-op — say so
+        // instead of silently recording pins. The wrong row is elsewhere.
+        if let current = self.winnerIsA(of: pointID), current == winnerIsA {
+            let number = point(withID: pointID)?.pointNumber ?? 0
+            statusMessage = "Play #\(number) is already scored for Side \(winnerIsA ? "A" : "B") — nothing changed. If the score still looks wrong, correct the play whose winner is wrong, or use Swap A↔B in the game legend if the sides are reversed."
+            return
+        }
         // The user corrects THIS play against the chain they see above it —
         // make every earlier displayed winner durable first, so neither this
         // correction nor a later re-detection can ripple backward.
@@ -1473,6 +1480,20 @@ final class AppState: ObservableObject {
                 recordEvent(.pointWinnerOverridden(pointID: p.id, side: winnerSide.rawValue))
             }
         }
+    }
+
+    /// The sides are labeled backwards for a whole game (A should be B):
+    /// re-anchor by pinning the first play's serve to the opposite side.
+    /// Every row's A/B letter and both score columns swap; the winner of
+    /// each play (as a physical party) is unchanged.
+    func swapSides(for game: Game) {
+        let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
+        guard let first = active.first else { return }
+        let anchor = anchorSide(for: game) ?? .left
+        let flipped: ServeDetector.ServeSide = anchor == .left ? .right : .left
+        recordEvent(.serveSideOverridden(pointID: first.id, side: flipped.rawValue))
+        computeAllScores()
+        statusMessage = "A and B swapped for game \(game.gameNumber) — Side A is now the \(serveSideLabel(flipped).lowercased()) side."
     }
 
     /// Rules violation for a game's score chain, if any (e.g. 23:9).
