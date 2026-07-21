@@ -801,6 +801,7 @@ final class AppState: ObservableObject {
         var overrides: [UUID: ServeDetector.ServeSide] = [:]
         var winners: [UUID: ServeDetector.ServeSide] = [:]
         var adjustments: [UUID: ServeDetector.PointScore] = [:]
+        var adjustmentsBefore: [UUID: ServeDetector.PointScore] = [:]
         for event in sessionEvents {
             if case .highlightRated(let pointID, let raw) = event {
                 if let rating = HighlightRating(rawValue: raw) {
@@ -820,11 +821,15 @@ final class AppState: ObservableObject {
             if case .scoreAdjusted(let pointID, let a, let b) = event {
                 adjustments[pointID] = ServeDetector.PointScore(scoreA: a, scoreB: b)
             }
+            if case .scoreAdjustedBefore(let pointID, let a, let b) = event {
+                adjustmentsBefore[pointID] = ServeDetector.PointScore(scoreA: a, scoreB: b)
+            }
         }
         pointRatings = ratings
         serveOverrides = overrides
         winnerOverrides = winners
         scoreAdjustments = adjustments
+        scoreAdjustmentsBefore = adjustmentsBefore
     }
 
     /// Derived review state for the point-list chip.
@@ -1305,8 +1310,12 @@ final class AppState: ObservableObject {
         games = SessionMaterializer.apply(events: effective, to: loaded.baseline.games)
 
         deriveTrimSegments()
-        computeAllScores()
+        // Derive overrides/pins from the ledger BEFORE computing scores —
+        // computing first showed a pin-less chain after every relaunch, and
+        // a correction made against that stale display re-pinned the wrong
+        // values over the user's real ones.
         refreshSessionDerivedState()
+        computeAllScores()
         scheduleServeRedetection()
     }
 
@@ -1550,6 +1559,22 @@ final class AppState: ObservableObject {
         statusMessage = "Score after play #\(target.pointNumber) set to \(scoreA):\(scoreB) — later plays continue from it."
     }
 
+    /// Manually set the score BEFORE a play (at its serve). Works for any
+    /// play including a game's first; the play's own winner then increments
+    /// from the set value.
+    func adjustScoreBefore(pointID: UUID, scoreA: Int, scoreB: Int) {
+        guard scoreA >= 0, scoreB >= 0, let target = point(withID: pointID) else { return }
+        let before = scoreBefore(of: pointID).map { "\($0.scoreA):\($0.scoreB)" } ?? "—"
+        appendCorrectionLog("""
+            SET SCORE BEFORE play #\(target.pointNumber)
+            model showed entering score \(before)
+            user set:   \(scoreA):\(scoreB) (score at this play's serve; this play and later continue from it)
+            """)
+        recordEvent(.scoreAdjustedBefore(pointID: pointID, scoreA: scoreA, scoreB: scoreB))
+        computeAllScores()
+        statusMessage = "Score before play #\(target.pointNumber) set to \(scoreA):\(scoreB) — this play and later continue from it."
+    }
+
     /// Rules violation for a game's score chain, if any (e.g. 23:9).
     func scoreViolation(for game: Game) -> String? {
         let active = game.points.filter { $0.reviewStatus != .deleted }.sorted { $0.start < $1.start }
@@ -1751,7 +1776,8 @@ final class AppState: ObservableObject {
                 nextGameFirstServe: nextGameFirstServe,
                 firstServe: anchorSide(for: game),
                 lastPointWinner: lastActive.flatMap { winnerOverrides[$0.id] },
-                adjustments: scoreAdjustments
+                adjustments: scoreAdjustments,
+                adjustmentsBefore: scoreAdjustmentsBefore
             )
             allScores.merge(result.scores) { _, new in new }
             scoreTraces.merge(result.trace) { _, new in new }
@@ -1765,6 +1791,7 @@ final class AppState: ObservableObject {
     /// Manual running-score overrides (players miscounted on court), derived
     /// from scoreAdjusted ledger events; keyed by play, last event wins.
     private(set) var scoreAdjustments: [UUID: ServeDetector.PointScore] = [:]
+    private(set) var scoreAdjustmentsBefore: [UUID: ServeDetector.PointScore] = [:]
 
     /// Per-play winner-derivation traces from the last score computation.
     private var scoreTraces: [UUID: String] = [:]

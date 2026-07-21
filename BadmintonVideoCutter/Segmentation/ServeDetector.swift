@@ -266,13 +266,15 @@ final class ServeDetector {
         nextGameFirstServe: ServeSide? = nil,
         firstServe explicitFirstServe: ServeSide? = nil,
         lastPointWinner: ServeSide? = nil,
-        adjustments: [UUID: PointScore] = [:]
+        adjustments: [UUID: PointScore] = [:],
+        adjustmentsBefore: [UUID: PointScore] = [:]
     ) -> [UUID: PointScore] {
         computeScoresWithTrace(points: points, serveSides: serveSides,
                                nextGameFirstServe: nextGameFirstServe,
                                firstServe: explicitFirstServe,
                                lastPointWinner: lastPointWinner,
-                               adjustments: adjustments).scores
+                               adjustments: adjustments,
+                               adjustmentsBefore: adjustmentsBefore).scores
     }
 
     /// Same computation, plus a per-play natural-language derivation trace
@@ -283,7 +285,8 @@ final class ServeDetector {
         nextGameFirstServe: ServeSide? = nil,
         firstServe explicitFirstServe: ServeSide? = nil,
         lastPointWinner: ServeSide? = nil,
-        adjustments: [UUID: PointScore] = [:]
+        adjustments: [UUID: PointScore] = [:],
+        adjustmentsBefore: [UUID: PointScore] = [:]
     ) -> (scores: [UUID: PointScore], trace: [UUID: String]) {
         let activePoints = points.filter { $0.reviewStatus != .deleted }
         guard !activePoints.isEmpty else { return ([:], [:]) }
@@ -307,6 +310,14 @@ final class ServeDetector {
         func letter(_ side: ServeSide) -> String { side == firstServe ? "A" : "B" }
 
         for i in 0..<activePoints.count {
+            // Manual score-at-serve override: rebase BEFORE this play's
+            // winner increment is applied.
+            var setBefore: String?
+            if let adj = adjustmentsBefore[activePoints[i].id] {
+                scoreA = adj.scoreA
+                scoreB = adj.scoreB
+                setBefore = "entering score MANUALLY SET to \(adj.scoreA):\(adj.scoreB) ; "
+            }
             // Rally scoring: the winner of point N is exactly the side that
             // serves point N+1. Using only the NEXT serve (not the transition)
             // means one misdetected side corrupts one point, not two, and a
@@ -363,6 +374,9 @@ final class ServeDetector {
                 scoreA = adj.scoreA
                 scoreB = adj.scoreB
                 trace[activePoints[i].id] = (trace[activePoints[i].id] ?? "") + " ; score MANUALLY SET to \(adj.scoreA):\(adj.scoreB)"
+            }
+            if let setBefore {
+                trace[activePoints[i].id] = setBefore + (trace[activePoints[i].id] ?? "")
             }
             results[activePoints[i].id] = PointScore(scoreA: scoreA, scoreB: scoreB)
         }

@@ -16,6 +16,7 @@ struct PointListView: View {
     /// Score-fix flow: game being corrected + entered final score.
     @State private var fixScoreGame: Game?
     @State private var setScoreTarget: GamePoint?
+    @State private var setScoreIsBefore = false
     @State private var setScoreA = ""
     @State private var setScoreB = ""
     @State private var fixScoreA = ""
@@ -119,20 +120,26 @@ struct PointListView: View {
             Text("Enter the real final score (A:B). The app re-analyzes serve confidence and flips only the least-confident winner calls — your pinned plays are never touched, and every flip is undoable.")
         }
         .alert(
-            "Set score after play #\(setScoreTarget?.pointNumber ?? 0)",
+            "Set score \(setScoreIsBefore ? "before" : "after") play #\(setScoreTarget?.pointNumber ?? 0)",
             isPresented: Binding(get: { setScoreTarget != nil }, set: { if !$0 { setScoreTarget = nil } })
         ) {
             TextField("Side A", text: $setScoreA)
             TextField("Side B", text: $setScoreB)
             Button("Set score") {
                 if let target = setScoreTarget, let a = Int(setScoreA), let b = Int(setScoreB) {
-                    appState.adjustScore(pointID: target.id, scoreA: a, scoreB: b)
+                    if setScoreIsBefore {
+                        appState.adjustScoreBefore(pointID: target.id, scoreA: a, scoreB: b)
+                    } else {
+                        appState.adjustScore(pointID: target.id, scoreA: a, scoreB: b)
+                    }
                 }
                 setScoreTarget = nil
             }
             Button("Cancel", role: .cancel) { setScoreTarget = nil }
         } message: {
-            Text("The actual score right after this play (useful when the players themselves miscounted on court). Later plays continue counting from it; earlier plays are untouched.")
+            Text(setScoreIsBefore
+                 ? "The actual score at this play's serve (useful when the players themselves miscounted on court). This play and later ones continue counting from it."
+                 : "The actual score right after this play (useful when the players themselves miscounted on court). Later plays continue counting from it; earlier plays are untouched.")
         }
         .confirmationDialog(
             "Start a new game here?",
@@ -274,6 +281,13 @@ struct PointListView: View {
                                     },
                                     onSetScore: {
                                         setScoreTarget = point
+                                        setScoreIsBefore = false
+                                        setScoreA = ""
+                                        setScoreB = ""
+                                    },
+                                    onSetScoreBefore: {
+                                        setScoreTarget = point
+                                        setScoreIsBefore = true
                                         setScoreA = ""
                                         setScoreB = ""
                                     },
@@ -398,6 +412,13 @@ struct PointListView: View {
                     },
                     onSetScore: {
                         setScoreTarget = entry.point
+                        setScoreIsBefore = false
+                        setScoreA = ""
+                        setScoreB = ""
+                    },
+                    onSetScoreBefore: {
+                        setScoreTarget = entry.point
+                        setScoreIsBefore = true
                         setScoreA = ""
                         setScoreB = ""
                     },
@@ -651,6 +672,7 @@ struct PointRow: View {
     var onStartNewGame: (() -> Void)?
     var onRecalculateScore: (() -> Void)?
     var onSetScore: (() -> Void)?
+    var onSetScoreBefore: (() -> Void)?
     let onTap: () -> Void
 
     /// After-score with the component that just incremented rendered bold in
@@ -834,6 +856,7 @@ struct PointRow: View {
                     }
                 }
                 Button("Recalculate score from here") { onRecalculateScore?() }
+                Button("Set score before this play…") { onSetScoreBefore?() }
                 Button("Set score after this play…") { onSetScore?() }
                 Button("Start new game from this play…") { onStartNewGame?() }
             }

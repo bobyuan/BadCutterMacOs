@@ -33,6 +33,9 @@ enum SessionEvent: Codable, Equatable {
     /// court, or the chain drifted). Later plays accumulate from it.
     /// Audit-only; last event per play wins.
     case scoreAdjusted(pointID: UUID, scoreA: Int, scoreB: Int)
+    /// Manual running-score override BEFORE a play (the score at its serve).
+    /// Audit-only; last event per play wins.
+    case scoreAdjustedBefore(pointID: UUID, scoreA: Int, scoreB: Int)
     case savedToPool(rallyClips: Int, backgroundClips: Int)
     case exported(output: String)
     case undo
