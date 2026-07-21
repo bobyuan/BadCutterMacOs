@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import Vision
 
 struct PointListView: View {
     @ObservedObject var appState: AppState
@@ -20,7 +21,10 @@ struct PointListView: View {
     @State private var gameSplitCandidate: GamePoint?
     /// Legend popover: game whose A/B court frame is being shown.
     @State private var legendGameID: UUID?
-    @State private var legendFrame: CGImage?
+    /// Detected court frame + player figures, keyed by the game's first
+    /// active point ID (stable across re-materialization, unlike game IDs).
+    @State private var legendCache: [UUID: LegendData] = [:]
+    @State private var legendLoading: Set<UUID> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -258,13 +262,15 @@ struct PointListView: View {
                                 GameSectionHeader(game: game, pointScores: appState.pointScores)
                                 if let legend = appState.sideLegend(for: game) {
                                     HStack(spacing: 4) {
+                                        if let key = legendKey(for: game), let data = legendCache[key] {
+                                            legendMiniFigures(data)
+                                        }
                                         Text(legend)
                                             .font(.caption2)
                                             .foregroundStyle(.secondary)
                                         Button {
                                             legendGameID = game.id
-                                            legendFrame = nil
-                                            loadLegendFrame(for: game)
+                                            loadLegendData(for: game)
                                         } label: {
                                             Image(systemName: "photo.circle")
                                                 .font(.caption)
@@ -278,6 +284,7 @@ struct PointListView: View {
                                             legendPopover(for: game)
                                         }
                                     }
+                                    .onAppear { loadLegendData(for: game) }
                                 }
                                 if let violation = appState.scoreViolation(for: game) {
                                     HStack(spacing: 6) {
@@ -363,38 +370,30 @@ struct PointListView: View {
         }
     }
 
-    // MARK: - Side Legend (A/B on the real court)
+    // MARK: - Side Legend (real player figures from the video)
+
+    private func legendKey(for game: Game) -> UUID? {
+        game.points.first(where: { $0.reviewStatus != .deleted })?.id
+    }
 
     @ViewBuilder
     private func legendPopover(for game: Game) -> some View {
-        let aFirst = appState.sideAIsFirstHalf(for: game)
-        let vertical = appState.serveAxis == .vertical
         VStack(spacing: 8) {
-            if let frame = legendFrame {
-                ZStack {
-                    Image(decorative: frame, scale: 1)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                    if vertical {
-                        VStack {
-                            legendBadge(aFirst ? "A" : "B", isA: aFirst)
-                            Spacer()
-                            legendBadge(aFirst ? "B" : "A", isA: !aFirst)
-                        }
-                        .padding(14)
-                    } else {
-                        HStack {
-                            legendBadge(aFirst ? "A" : "B", isA: aFirst)
-                            Spacer()
-                            legendBadge(aFirst ? "B" : "A", isA: !aFirst)
-                        }
-                        .padding(14)
+            if let key = legendKey(for: game), let data = legendCache[key] {
+                annotatedFrame(data)
+                if !data.aFigures.isEmpty || !data.bFigures.isEmpty {
+                    HStack(alignment: .top, spacing: 20) {
+                        figureColumn(letter: "A", isA: true, figures: data.aFigures)
+                        figureColumn(letter: "B", isA: false, figures: data.bFigures)
                     }
+                } else {
+                    Text("No players detected in this frame — court halves labeled instead.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
-                .frame(width: 420, height: 240)
             } else {
                 ProgressView()
-                    .frame(width: 420, height: 240)
+                    .frame(width: 440, height: 250)
             }
             Text("Side A served this game's first play. Scores read A:B.")
                 .font(.caption2)
@@ -403,27 +402,137 @@ struct PointListView: View {
         .padding(10)
     }
 
-    private func legendBadge(_ letter: String, isA: Bool) -> some View {
-        Text(letter)
-            .font(.system(size: 24, weight: .heavy))
-            .foregroundStyle(.white)
-            .frame(width: 40, height: 40)
-            .background(Circle().fill(isA ? Color.blue : Color.orange))
-            .shadow(radius: 3)
+    /// The court frame with each detected player boxed and lettered in their
+    /// side's color; falls back to half-labels when nobody was detected.
+    private func annotatedFrame(_ data: LegendData) -> some View {
+        Image(decorative: data.frame, scale: 1)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .overlay {
+                GeometryReader { geo in
+                    let sx = geo.size.width / CGFloat(data.frame.width)
+                    let sy = geo.size.height / CGFloat(data.frame.height)
+                    if data.boxes.isEmpty {
+                        halfLabels(data)
+                            .frame(width: geo.size.width, height: geo.size.height)
+                    } else {
+                        ForEach(Array(data.boxes.enumerated()), id: \.offset) { pair in
+                            let box = pair.element
+                            let r = CGRect(x: box.rect.minX * sx, y: box.rect.minY * sy,
+                                           width: box.rect.width * sx, height: box.rect.height * sy)
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(box.isA ? Color.blue : Color.orange, lineWidth: 2)
+                                .frame(width: r.width, height: r.height)
+                                .position(x: r.midX, y: r.midY)
+                            legendBadge(box.isA ? "A" : "B", isA: box.isA, size: 18)
+                                .position(x: r.midX, y: max(10, r.minY - 11))
+                        }
+                    }
+                }
+            }
+            .frame(width: 440, height: 250)
     }
 
-    private func loadLegendFrame(for game: Game) {
-        guard let url = appState.currentAssetURL,
+    @ViewBuilder
+    private func halfLabels(_ data: LegendData) -> some View {
+        if data.vertical {
+            VStack {
+                legendBadge(data.aFirst ? "A" : "B", isA: data.aFirst)
+                Spacer()
+                legendBadge(data.aFirst ? "B" : "A", isA: !data.aFirst)
+            }
+            .padding(14)
+        } else {
+            HStack {
+                legendBadge(data.aFirst ? "A" : "B", isA: data.aFirst)
+                Spacer()
+                legendBadge(data.aFirst ? "B" : "A", isA: !data.aFirst)
+            }
+            .padding(14)
+        }
+    }
+
+    private func figureColumn(letter: String, isA: Bool, figures: [CGImage]) -> some View {
+        VStack(spacing: 4) {
+            legendBadge(letter, isA: isA, size: 22)
+            HStack(spacing: 4) {
+                ForEach(Array(figures.enumerated()), id: \.offset) { pair in
+                    Image(decorative: pair.element, scale: 1)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 56, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6)
+                            .stroke(isA ? Color.blue : Color.orange, lineWidth: 2))
+                }
+                if figures.isEmpty {
+                    Text("not seen")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    /// Tiny cropped-player chips shown inline in the game header.
+    private func legendMiniFigures(_ data: LegendData) -> some View {
+        HStack(spacing: 3) {
+            if let a = data.aFigures.first { miniFigureChip(a, isA: true) }
+            if let b = data.bFigures.first { miniFigureChip(b, isA: false) }
+        }
+    }
+
+    private func miniFigureChip(_ figure: CGImage, isA: Bool) -> some View {
+        Image(decorative: figure, scale: 1)
+            .resizable()
+            .aspectRatio(contentMode: .fill)
+            .frame(width: 16, height: 16)
+            .clipShape(Circle())
+            .overlay(Circle().stroke(isA ? Color.blue : Color.orange, lineWidth: 1.5))
+    }
+
+    private func legendBadge(_ letter: String, isA: Bool, size: CGFloat = 40) -> some View {
+        Text(letter)
+            .font(.system(size: size * 0.6, weight: .heavy))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(Circle().fill(isA ? Color.blue : Color.orange))
+            .shadow(radius: 2)
+    }
+
+    /// Grab candidate frames around the game's first serve, run the Vision
+    /// person detector on each, and keep the frame that shows the most
+    /// players (preferring one with both sides represented).
+    private func loadLegendData(for game: Game) {
+        guard let key = legendKey(for: game),
+              legendCache[key] == nil, !legendLoading.contains(key),
+              let url = appState.currentAssetURL,
               let first = game.points.first(where: { $0.reviewStatus != .deleted }) else { return }
-        let time = first.start + 0.5
+        legendLoading.insert(key)
+        let vertical = appState.serveAxis == .vertical
+        let aFirst = appState.sideAIsFirstHalf(for: game)
+        let candidates = [first.start + 0.5, (first.start + first.end) / 2, first.start + 2.0]
         Task.detached {
             let asset = AVURLAsset(url: url)
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 840, height: 480)
-            let cm = CMTime(seconds: time, preferredTimescale: 600)
-            let image = try? generator.copyCGImage(at: cm, actualTime: nil)
-            await MainActor.run { legendFrame = image }
+            generator.maximumSize = CGSize(width: 960, height: 540)
+            var best: LegendData?
+            for t in candidates {
+                let cm = CMTime(seconds: t, preferredTimescale: 600)
+                guard let image = try? generator.copyCGImage(at: cm, actualTime: nil) else { continue }
+                let data = LegendFigureDetector.analyze(frame: image, vertical: vertical, aFirst: aFirst)
+                if best == nil || data.boxes.count > (best?.boxes.count ?? 0) { best = data }
+                if !data.aFigures.isEmpty && !data.bFigures.isEmpty && data.boxes.count >= 2 {
+                    best = data
+                    break
+                }
+            }
+            let result = best
+            await MainActor.run {
+                legendLoading.remove(key)
+                if let result { legendCache[key] = result }
+            }
         }
     }
 
@@ -744,5 +853,68 @@ struct GameSectionHeader: View {
                 .foregroundStyle(.yellow)
                 .font(.caption)
         }
+    }
+}
+
+
+// MARK: - Legend Figure Detection
+
+/// A court frame plus the players Vision detected in it, split into A/B.
+struct LegendData {
+    var frame: CGImage
+    /// Player bounding boxes in frame pixel coordinates (top-left origin).
+    var boxes: [(rect: CGRect, isA: Bool)]
+    var aFigures: [CGImage]
+    var bFigures: [CGImage]
+    var vertical: Bool
+    var aFirst: Bool
+}
+
+enum LegendFigureDetector {
+
+    /// Runs VNDetectHumanRectanglesRequest and assigns each detected person
+    /// to Side A or B by which court half (per the serve axis) they stand in.
+    static func analyze(frame: CGImage, vertical: Bool, aFirst: Bool) -> LegendData {
+        let w = CGFloat(frame.width)
+        let h = CGFloat(frame.height)
+
+        func detect(upperBodyOnly: Bool) -> [VNHumanObservation] {
+            let request = VNDetectHumanRectanglesRequest()
+            request.upperBodyOnly = upperBodyOnly
+            let handler = VNImageRequestHandler(cgImage: frame, options: [:])
+            try? handler.perform([request])
+            return (request.results ?? []).filter { $0.confidence > 0.25 }
+        }
+        var observations = detect(upperBodyOnly: false)
+        if observations.isEmpty { observations = detect(upperBodyOnly: true) }
+
+        let rects = observations
+            .map { VNImageRectForNormalizedRect($0.boundingBox, Int(w), Int(h)) }
+            .map { CGRect(x: $0.minX, y: h - $0.maxY, width: $0.width, height: $0.height) }
+            .filter { $0.height >= h * 0.05 }
+            .sorted { $0.width * $0.height > $1.width * $1.height }
+            .prefix(6)
+
+        var boxes: [(rect: CGRect, isA: Bool)] = []
+        var aFigures: [CGImage] = []
+        var bFigures: [CGImage] = []
+        for rect in rects {
+            let firstHalf = vertical ? rect.midY < h / 2 : rect.midX < w / 2
+            let isA = firstHalf == aFirst
+            boxes.append((rect, isA))
+            let padded = CGRect(x: rect.minX - rect.width * 0.15,
+                                y: rect.minY - rect.height * 0.1,
+                                width: rect.width * 1.3,
+                                height: rect.height * 1.2)
+                .intersection(CGRect(x: 0, y: 0, width: w, height: h))
+            guard let crop = frame.cropping(to: padded) else { continue }
+            if isA {
+                if aFigures.count < 3 { aFigures.append(crop) }
+            } else {
+                if bFigures.count < 3 { bFigures.append(crop) }
+            }
+        }
+        return LegendData(frame: frame, boxes: boxes, aFigures: aFigures,
+                          bFigures: bFigures, vertical: vertical, aFirst: aFirst)
     }
 }
